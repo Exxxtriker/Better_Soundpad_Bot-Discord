@@ -41,7 +41,7 @@ Este bot traz toda a diversão de um sound-pad para o Discord. Com suporte a dow
 
 ##  Tecnologias Utilizadas
 
-- **Linguagem:** JavaScript (100 %) :contentReference[oaicite:0]{index=0}  
+- **Linguagem:** JavaScript (100 %)
 - **Arquivos principais:**
   - `app.js` — lógica central do bot  
   - `config.js` — configurações (tokens, IDs de servidor, etc.)  
@@ -50,7 +50,7 @@ Este bot traz toda a diversão de um sound-pad para o Discord. Com suporte a dow
   - `.eslintrc.json` — regras de linting  
   - `package.json` + `package-lock.json` — dependências e meta informações do projeto  
   - `.gitignore` — arquivos ignorados no controle de versão  
-  - `src/` — possível pasta com código adicional ou estrutura modular :contentReference[oaicite:1]{index=1}
+  - `src/` — possível pasta com código adicional ou estrutura modular
 
 ---
 
