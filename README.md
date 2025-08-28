@@ -34,6 +34,8 @@ Este bot traz toda a diversão de um sound-pad para o Discord. Com suporte a dow
 
 -  **Menu interativo**  
   Navegue pelas opções de reprodução utilizando um sistema de comandos claras e intuitivas.
+![Preview do Bot](https://media.discordapp.net/attachments/1311710038070399008/1410707595676614848/image.png?ex=68b1ff54&is=68b0add4&hm=129edf64436f60e7259ba0e5a10129b371b5e3f9cb97b9ace9959ad21abee9bd&=&format=webp&quality=lossless)
+
 
 ---
 
