@@ -16,9 +16,6 @@ Um bot para Discord que funciona como um **sound-pad**, permitindo:
 - [Instalação](#instalação)  
 - [Uso](#uso)  
 - [Configuração](#configuração)  
-- [Estrutura do Projeto](#estrutura-do-projeto)  
-- [Contribuição](#contribuição)  
-- [Licença](#licença)
 
 ---
 
