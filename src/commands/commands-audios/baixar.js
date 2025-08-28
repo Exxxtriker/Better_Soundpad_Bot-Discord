@@ -1,3 +1,9 @@
+/**
+ * This command uses yt-dlp
+ * Copyright (c) 2019-2024 yt-dlp developers
+ * Repository: https://github.com/yt-dlp/yt-dlp
+ * License: The Unlicense
+ */
 const { SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
