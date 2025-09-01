@@ -266,11 +266,34 @@ module.exports = {
             });
 
             collector.on('end', async () => {
-                if (!player || player.state.status === AudioPlayerStatus.Idle) {
+                const cleanup = async () => {
                     delete activeMenus[guildId];
+
                     try {
-                        await interaction.deleteReply();
-                    } catch (e) {}
+                        const message = await interaction.fetchReply();
+                        if (message) {
+                            await message.delete().catch(() => {});
+                        }
+                    } catch (error) {
+                        if (error.code === 10008) {
+                        } else {
+                            console.error('Erro ao tentar deletar o menu:', error);
+                        }
+                    }
+
+                    if (connection) {
+                        connection.destroy();
+                        connection = null;
+                    }
+                    if (player) {
+                        player.stop();
+                        player = null;
+                    }
+                    currentResource = null;
+                };
+
+                if (!player || player.state.status === AudioPlayerStatus.Idle) {
+                    await cleanup();
                 } else {
                     player.once(AudioPlayerStatus.Idle, () => {
                         delete activeMenus[guildId];
@@ -286,6 +309,7 @@ module.exports = {
 
                     newCollector.on('end', async () => {
                         collector.emit('end');
+                        await cleanup();
                     });
                 }
             });
