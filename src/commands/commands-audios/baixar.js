@@ -1,3 +1,4 @@
+/* eslint-disable max-len */
 /**
  * This command uses yt-dlp
  * Copyright (c) 2019-2024 yt-dlp developers
@@ -13,38 +14,45 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('ytmp3')
         .setDescription('Baixa um vídeo do YouTube e salva como .mp3')
+        .addStringOption((option) => option.setName('nome')
+            .setDescription('Nome do arquivo de saída (sem extensão)')
+            .setRequired(true))
+        .addStringOption((option) => option.setName('tipo')
+            .setDescription('Tipo de áudio')
+            .setRequired(true)
+            .addChoices(
+                { name: 'Meme', value: 'Meme' },
+                { name: 'SoundTrack-Rpg', value: 'SoundTrack-Rpg' },
+                { name: 'Music', value: 'Music' },
+            ))
         .addStringOption((option) => option.setName('url')
             .setDescription('URL do vídeo do YouTube')
             .setRequired(true))
-        .addStringOption((option) => option.setName('nome')
-            .setDescription('Nome do arquivo de saída (sem extensão)')
-            .setRequired(false))
         .setDMPermission(false),
 
     async execute(interaction) {
+        const nome = interaction.options.getString('nome');
+        const tipo = interaction.options.getString('tipo');
         const url = interaction.options.getString('url');
-        const fileName = interaction.options.getString('nome') || `yt_audio_${Date.now()}`;
+
+        const fileName = `${tipo}-${nome}`;
 
         await interaction.reply({ content: '🎶 Baixando e convertendo, aguarde...', flags: 64 });
 
         try {
-            // if (interaction.user.id !== '335012394226941966') {
-            //     return interaction.editReply('Você é o meu patrono e só obedeço a ele ☠️');
-            // }
             const audioFolderPath = path.join(__dirname, 'audios');
             if (!fs.existsSync(audioFolderPath)) {
                 fs.mkdirSync(audioFolderPath, { recursive: true });
             }
 
             const filePath = path.join(audioFolderPath, `${fileName}.mp3`);
-
             const ytDlpPath = path.join(__dirname, 'yt-dlp.exe');
 
             execFile(ytDlpPath, [
                 '-x',
                 '--audio-format', 'mp3',
-                '--quiet', // silencia logs
-                '--no-warnings', // evita warnings
+                '--quiet',
+                '--no-warnings',
                 '-o', filePath,
                 url,
             ], (error, stdout, stderr) => {
