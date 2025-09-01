@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits } = require('discord.js');
+const mongoose = require('mongoose');
 const { token } = require('./config');
 
 const client = new Client({
@@ -14,5 +15,9 @@ const client = new Client({
 
 require('./src/handlers/eventsHandler')(client);
 require('./src/handlers/commandsHandler')(client);
+
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log('✅ MongoDB conectado!'))
+    .catch((err) => console.log('❌ Erro ao conectar no MongoDB:', err));
 
 client.login(token);
