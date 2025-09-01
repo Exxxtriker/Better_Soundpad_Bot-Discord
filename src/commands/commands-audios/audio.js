@@ -177,6 +177,7 @@ module.exports = {
 
                     if (!player) {
                         player = createAudioPlayer();
+                        player.setMaxListeners(0);
 
                         player.on(AudioPlayerStatus.Idle, () => {
                             if (loopEnabled && currentResource?.metadata?.path) {
