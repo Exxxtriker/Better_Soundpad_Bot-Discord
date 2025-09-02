@@ -6,6 +6,7 @@ const profileSchema = new mongoose.Schema({
     points: { type: Number, default: 0 },
     level: { type: Number, default: 1 },
     xp: { type: Number, default: 0 },
+    money: { type: Number, default: 0 }, // Novo campo de moedas
     emblems: { type: [String], default: [] },
     rewards: { type: [String], default: [] },
     customizations: {

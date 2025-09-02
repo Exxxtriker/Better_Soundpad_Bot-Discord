@@ -1,7 +1,7 @@
 const Profile = require('../models/profile');
 
-const XP_PER_MESSAGE = 2; // XP usado para subir de nível
-const POINTS_PER_MESSAGE = 5; // Pontos usados para emblemas e recompensas
+const XP_PER_MESSAGE = 0.2; // XP usado para subir de nível
+const POINTS_PER_MESSAGE = 0.5; // Pontos usados para emblemas e recompensas
 const INTERACTION_COOLDOWN = 60 * 1000; // 1 minuto
 
 function calculateRank(level) {
@@ -55,13 +55,13 @@ async function checkEmblems(profile) {
         profile.rewards.push('Cor Verde');
         newRewards.push('Cor Verde');
     }
-    if (profile.points >= 50 && !profile.emblems.includes('Interativo')) {
+    if (profile.points >= 100 && !profile.emblems.includes('Interativo')) {
         profile.emblems.push('Interativo');
         newEmblems.push('Interativo');
         profile.rewards.push('Banner Azul');
         newRewards.push('Banner Azul');
     }
-    if (profile.points >= 100 && !profile.emblems.includes('Mestre')) {
+    if (profile.points >= 1000 && !profile.emblems.includes('Mestre')) {
         profile.emblems.push('Mestre');
         newEmblems.push('Mestre');
         profile.rewards.push('Avatar Especial');
