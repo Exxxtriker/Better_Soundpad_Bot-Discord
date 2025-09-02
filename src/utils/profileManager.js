@@ -1,13 +1,15 @@
 const Profile = require('../models/profile');
 
-const XP_PER_MESSAGE = 5;
+const XP_PER_MESSAGE = 2; // XP usado para subir de nível
+const POINTS_PER_MESSAGE = 5; // Pontos usados para emblemas e recompensas
 const INTERACTION_COOLDOWN = 60 * 1000; // 1 minuto
 
 function calculateRank(level) {
-    if (level >= 20) return 'Lendário';
-    if (level >= 15) return 'Mestre';
-    if (level >= 10) return 'Herói';
-    if (level >= 5) return 'Aventureiro';
+    if (level >= 90) return 'Ancião';
+    if (level >= 70) return 'Lendário';
+    if (level >= 50) return 'Mestre';
+    if (level >= 30) return 'Herói';
+    if (level >= 10) return 'Aventureiro';
     return 'Novato';
 }
 
@@ -22,10 +24,12 @@ async function addInteraction(userId, username) {
         return profile;
     }
 
-    profile.points += XP_PER_MESSAGE;
+    // ✅ Adiciona pontos e XP separados
+    profile.points += POINTS_PER_MESSAGE;
     profile.xp += XP_PER_MESSAGE;
     profile.lastInteraction = now;
 
+    // ✅ Atualiza nível se XP atingir o necessário
     const xpNeeded = profile.level * 100;
     if (profile.xp >= xpNeeded) {
         profile.level += 1;
@@ -42,11 +46,13 @@ async function checkEmblems(profile) {
     const newEmblems = [];
     const newRewards = [];
 
-    // Emblemas
+    profile.emblems = profile.emblems || [];
+    profile.rewards = profile.rewards || [];
+
     if (profile.points >= 10 && !profile.emblems.includes('Novato')) {
         profile.emblems.push('Novato');
         newEmblems.push('Novato');
-        profile.rewards.push('Cor Verde'); // recompensa automática
+        profile.rewards.push('Cor Verde');
         newRewards.push('Cor Verde');
     }
     if (profile.points >= 50 && !profile.emblems.includes('Interativo')) {

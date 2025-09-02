@@ -1,4 +1,4 @@
-const { Collection, Events } = require('discord.js');
+const { Collection } = require('discord.js');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -18,18 +18,4 @@ module.exports = async (client) => {
             client.commands.set(command.data.name, command);
         }
     }
-
-    client.on(Events.InteractionCreate, async (interaction) => {
-        if (!interaction.isChatInputCommand()) return;
-
-        const command = client.commands.get(interaction.commandName);
-        if (!command) return;
-
-        try {
-            await command.execute(interaction);
-        } catch (e) {
-            console.error(e);
-            await interaction.reply({ content: 'Houve um erro ao executar este comando.', flags: 64 });
-        }
-    });
 };

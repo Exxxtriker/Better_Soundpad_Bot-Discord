@@ -7,6 +7,7 @@ const profileSchema = new mongoose.Schema({
     level: { type: Number, default: 1 },
     xp: { type: Number, default: 0 },
     emblems: { type: [String], default: [] },
+    rewards: { type: [String], default: [] },
     customizations: {
         color: { type: String, default: '#00FF00' },
         title: { type: String, default: '' },
