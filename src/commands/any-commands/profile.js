@@ -9,7 +9,6 @@ function generateXPBar(currentXP, level) {
     const filledLength = Math.round(barLength * percent);
     const emptyLength = barLength - filledLength;
 
-    // Barra lendária: runas preenchidas ✦, runas vazias ✧
     const filledBar = '✦'.repeat(filledLength);
     const emptyBar = '✧'.repeat(emptyLength);
 
@@ -17,11 +16,14 @@ function generateXPBar(currentXP, level) {
 }
 
 function levelTitle(level) {
-    if (level >= 20) return '🌟 Lendário 🌟';
-    if (level >= 15) return '🔥 Mestre 🔥';
-    if (level >= 10) return '🛡️ Herói 🛡️';
-    if (level >= 5) return '🏹 Aventureiro 🏹';
-    return '🌱 Novato 🌱';
+    if (level >= 90) return '👑 Deus';
+    if (level >= 70) return '🌌 Imortal';
+    if (level >= 50) return '🔥 Ancião';
+    if (level >= 35) return '🌟 Lendário';
+    if (level >= 20) return '🛡️ Mestre';
+    if (level >= 10) return '⚔️ Herói';
+    if (level >= 5) return '🏹 Aventureiro';
+    return '🌱 Novato';
 }
 
 module.exports = {
@@ -48,24 +50,29 @@ module.exports = {
 
             profile.emblems = profile.emblems || [];
             profile.rewards = profile.rewards || [];
+            profile.money = profile.money || 0;
 
             const xpBar = generateXPBar(profile.xp, profile.level);
             const title = levelTitle(profile.level);
 
             const embed = new EmbedBuilder()
-                .setTitle(`📜 Perfil Do ${user.displayName}`)
+                .setTitle(`📜 Perfil de ${user.displayName}`)
                 .setColor(profile.customizations.color || '#00FF00')
-                .setDescription('📜 Jornada do aventureiro: conquistas, emblemas e glórias de um verdadeiro herói.')
-                .addFields(
-                    { name: '🏅 Pontos', value: `${profile.points}`, inline: true },
-                    { name: '⚔️ Nível', value: `${profile.level} • ${title}`, inline: true },
-                    { name: '✨ XP Atual', value: xpBar, inline: false },
-                    { name: '🏵️ Emblemas', value: profile.emblems.length ? profile.emblems.join(' | ') : 'Nenhum', inline: false },
-                    { name: '🎁 Recompensas', value: profile.rewards.length ? profile.rewards.join(' | ') : 'Nenhuma', inline: false },
-                    { name: '📛 Título', value: profile.customizations.title || 'Nenhum', inline: true },
-                )
                 .setThumbnail(user.displayAvatarURL({ dynamic: true }))
-                .setFooter({ text: '⚔️ Continue sua jornada, aventureiro, e torne-se lenda!' });
+                .setDescription('**🌟 Jornada de um verdadeiro aventureiro**\n⚔️ Siga crescendo, conquiste glórias e torne-se uma lenda viva!')
+                .addFields(
+                    { name: '🏆 Nível & Título', value: `${profile.level} • ${title}`, inline: true },
+                    { name: '💰 Ouro', value: `${profile.money} 🪙`, inline: true },
+                    { name: '🏅 Pontos', value: `${profile.points}`, inline: true },
+                    { name: '📛 Título Personalizado', value: profile.customizations.title || 'Nenhum', inline: false },
+                    { name: '🏵️ Emblemas', value: profile.emblems.length ? profile.emblems.join(' • ') : 'Nenhum', inline: false },
+                    { name: '🎁 Recompensas', value: profile.rewards.length ? profile.rewards.join(' • ') : 'Nenhuma', inline: false },
+                    { name: '✨ XP', value: xpBar, inline: false },
+                )
+                .setFooter({
+                    text: '⚔️ Continue sua jornada e torne-se lenda! | Guardião do reino 🛡️',
+                    iconURL: interaction.client.user.displayAvatarURL({ dynamic: true }),
+                });
 
             await interaction.editReply({ embeds: [embed] });
         } catch (error) {

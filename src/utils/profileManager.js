@@ -1,7 +1,7 @@
 const Profile = require('../models/profile');
 
-const XP_PER_MESSAGE = 0.2; // XP usado para subir de nível
-const POINTS_PER_MESSAGE = 0.5; // Pontos usados para emblemas e recompensas
+const XP_PER_MESSAGE = 1; // XP por mensagem
+const POINTS_PER_MESSAGE = 2; // Pontos por mensagem
 const INTERACTION_COOLDOWN = 60 * 1000; // 1 minuto
 
 function calculateRank(level) {
@@ -24,12 +24,12 @@ async function addInteraction(userId, username) {
         return profile;
     }
 
-    // ✅ Adiciona pontos e XP separados
+    // Adiciona pontos e XP
     profile.points += POINTS_PER_MESSAGE;
     profile.xp += XP_PER_MESSAGE;
     profile.lastInteraction = now;
 
-    // ✅ Atualiza nível se XP atingir o necessário
+    // Atualiza nível se XP atingir o necessário
     const xpNeeded = profile.level * 100;
     if (profile.xp >= xpNeeded) {
         profile.level += 1;
@@ -49,29 +49,48 @@ async function checkEmblems(profile) {
     profile.emblems = profile.emblems || [];
     profile.rewards = profile.rewards || [];
 
-    if (profile.points >= 10 && !profile.emblems.includes('Novato')) {
-        profile.emblems.push('Novato');
-        newEmblems.push('Novato');
-        profile.rewards.push('Cor Verde');
-        newRewards.push('Cor Verde');
-    }
-    if (profile.points >= 100 && !profile.emblems.includes('Interativo')) {
-        profile.emblems.push('Interativo');
-        newEmblems.push('Interativo');
-        profile.rewards.push('Banner Azul');
-        newRewards.push('Banner Azul');
-    }
-    if (profile.points >= 1000 && !profile.emblems.includes('Mestre')) {
-        profile.emblems.push('Mestre');
-        newEmblems.push('Mestre');
-        profile.rewards.push('Avatar Especial');
-        newRewards.push('Avatar Especial');
-    }
-    if (profile.level >= 10 && !profile.emblems.includes('Herói')) {
-        profile.emblems.push('Herói');
-        newEmblems.push('Herói');
-        profile.rewards.push('Título Heroico');
-        newRewards.push('Título Heroico');
+    // Regras mais difíceis para desbloqueio
+    const emblemRules = [
+        {
+            points: 50, level: 0, emblem: 'Novato', reward: { type: 'color', value: 'Verde' },
+        },
+        {
+            points: 250, level: 5, emblem: 'Interativo', reward: { type: 'color', value: 'Azul' },
+        },
+        {
+            points: 1000, level: 10, emblem: 'Herói', reward: { type: 'title', value: 'Título Heroico' },
+        },
+        {
+            points: 3000, level: 20, emblem: 'Mestre', reward: { type: 'color', value: 'Dourado' },
+        },
+        {
+            points: 7000, level: 35, emblem: 'Lendário', reward: { type: 'title', value: 'Título Lendário' },
+        },
+        {
+            points: 15000, level: 50, emblem: 'Ancião', reward: { type: 'color', value: 'Roxo' },
+        },
+        {
+            points: 30000, level: 70, emblem: 'Imortal', reward: { type: 'title', value: 'Título Imortal' },
+        },
+        {
+            points: 50000, level: 90, emblem: 'Deus', reward: { type: 'color', value: 'Vermelho Rubi' },
+        },
+        {
+            points: 90000, level: 100, emblem: '☀️ Eterno ☀️', reward: { type: 'title', value: 'Título Custom' },
+        },
+    ];
+
+    for (const rule of emblemRules) {
+        if (
+            profile.points >= rule.points
+            && profile.level >= rule.level
+            && !profile.emblems.includes(rule.emblem)
+        ) {
+            profile.emblems.push(rule.emblem);
+            newEmblems.push(rule.emblem);
+            profile.rewards.push(rule.reward);
+            newRewards.push(rule.reward);
+        }
     }
 
     await profile.save();

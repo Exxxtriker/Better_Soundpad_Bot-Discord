@@ -13,6 +13,7 @@ const profileSchema = new mongoose.Schema({
         color: { type: String, default: '#00FF00' },
         title: { type: String, default: '' },
     },
+    lastDaily: { type: Date, default: null },
     lastInteraction: { type: Date, default: null },
 });
 
