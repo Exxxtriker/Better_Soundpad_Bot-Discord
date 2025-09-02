@@ -149,7 +149,11 @@ module.exports = {
                 .setImage('https://media.discordapp.net/attachments/1402058526788161696/1408461378418901023/LwVJ.gif')
                 .setFooter({ text: 'O bardo espera ansioso por sua escolha... 🎤' });
 
-            await interaction.reply({
+            // responde só para o usuário que o menu foi criado
+            await interaction.reply({ content: '🎶 Menu de áudios criado!', flags: 64 });
+
+            // manda o menu real no canal para todos verem
+            const sentMessage = await interaction.channel.send({
                 embeds: [embed],
                 components: getRows(page),
             });
@@ -270,9 +274,12 @@ module.exports = {
                     delete activeMenus[guildId];
 
                     try {
-                        const message = await interaction.fetchReply();
-                        if (message) {
-                            await message.delete().catch(() => {});
+                        try {
+                            await sentMessage.delete().catch(() => {});
+                        } catch (error) {
+                            if (error.code !== 10008) { // Unknown Message
+                                console.error('Erro ao tentar deletar o menu:', error);
+                            }
                         }
                     } catch (error) {
                         if (error.code === 10008) {
