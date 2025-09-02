@@ -52,32 +52,18 @@ async function checkEmblems(profile) {
     // Regras mais difíceis para desbloqueio
     const emblemRules = [
         {
-            points: 50, level: 0, emblem: 'Novato', reward: { type: 'color', value: 'Verde' },
+            points: 50, level: 0, emblem: 'Novato', reward: { type: 'emblem', value: 'Novato' },
         },
         {
-            points: 250, level: 5, emblem: 'Interativo', reward: { type: 'color', value: 'Azul' },
+            points: 250, level: 5, emblem: 'Interativo', reward: { type: 'emblem', value: 'Interativo' },
         },
-        {
-            points: 1000, level: 10, emblem: 'Herói', reward: { type: 'title', value: 'Título Heroico' },
-        },
-        {
-            points: 3000, level: 20, emblem: 'Mestre', reward: { type: 'color', value: 'Dourado' },
-        },
-        {
-            points: 7000, level: 35, emblem: 'Lendário', reward: { type: 'title', value: 'Título Lendário' },
-        },
-        {
-            points: 15000, level: 50, emblem: 'Ancião', reward: { type: 'color', value: 'Roxo' },
-        },
-        {
-            points: 30000, level: 70, emblem: 'Imortal', reward: { type: 'title', value: 'Título Imortal' },
-        },
-        {
-            points: 50000, level: 90, emblem: 'Deus', reward: { type: 'color', value: 'Vermelho Rubi' },
-        },
-        {
-            points: 90000, level: 100, emblem: '☀️ Eterno ☀️', reward: { type: 'title', value: 'Título Custom' },
-        },
+        { points: 1000, level: 10, emblem: { type: 'emblem', value: 'Herói' } },
+        { points: 3000, level: 20, emblem: { type: 'emblem', value: 'Mestre' } },
+        { points: 7000, level: 35, emblem: { type: 'emblem', value: 'Lendário' } },
+        { points: 15000, level: 50, emblem: { type: 'emblem', value: 'Ancião' } },
+        { points: 30000, level: 70, emblem: { type: 'emblem', value: 'Imortal' } },
+        { points: 50000, level: 90, emblem: { type: 'emblem', value: 'Deus' } },
+        { points: 90000, level: 100, emblem: { type: 'emblem', value: '☀️ Eterno ☀️' } },
     ];
 
     for (const rule of emblemRules) {
