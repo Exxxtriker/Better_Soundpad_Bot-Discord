@@ -52,18 +52,32 @@ async function checkEmblems(profile) {
     // Regras mais difíceis para desbloqueio
     const emblemRules = [
         {
-            points: 50, level: 0, emblem: 'Novato', reward: { type: 'emblem', value: 'Novato' },
+            points: 50, level: 0, emblem: 'Novato', reward: 'Novato',
         },
         {
-            points: 250, level: 5, emblem: 'Interativo', reward: { type: 'emblem', value: 'Interativo' },
+            points: 250, level: 5, emblem: 'Interativo', reward: 'Interativo',
         },
-        { points: 1000, level: 10, emblem: { type: 'emblem', value: 'Herói' } },
-        { points: 3000, level: 20, emblem: { type: 'emblem', value: 'Mestre' } },
-        { points: 7000, level: 35, emblem: { type: 'emblem', value: 'Lendário' } },
-        { points: 15000, level: 50, emblem: { type: 'emblem', value: 'Ancião' } },
-        { points: 30000, level: 70, emblem: { type: 'emblem', value: 'Imortal' } },
-        { points: 50000, level: 90, emblem: { type: 'emblem', value: 'Deus' } },
-        { points: 90000, level: 100, emblem: { type: 'emblem', value: '☀️ Eterno ☀️' } },
+        {
+            points: 1000, level: 10, emblem: 'Herói', reward: 'Herói',
+        },
+        {
+            points: 3000, level: 20, emblem: 'Mestre', reward: 'Mestre',
+        },
+        {
+            points: 7000, level: 35, emblem: 'Lendário', reward: 'Lendário',
+        },
+        {
+            points: 15000, level: 50, emblem: 'Ancião', reward: 'Ancião',
+        },
+        {
+            points: 30000, level: 70, emblem: 'Imortal', reward: 'Imortal',
+        },
+        {
+            points: 50000, level: 90, emblem: 'Deus', reward: 'Deus',
+        },
+        {
+            points: 90000, level: 100, emblem: '☀️ Eterno ☀️', reward: '☀️ Eterno ☀️',
+        },
     ];
 
     for (const rule of emblemRules) {
