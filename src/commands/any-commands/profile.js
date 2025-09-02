@@ -53,7 +53,7 @@ module.exports = {
             const title = levelTitle(profile.level);
 
             const embed = new EmbedBuilder()
-                .setTitle(`🗡️ Perfil Do ${user.username}`)
+                .setTitle(`📜 Perfil Do ${user.displayName}`)
                 .setColor(profile.customizations.color || '#00FF00')
                 .setDescription('📜 Jornada do aventureiro: conquistas, emblemas e glórias de um verdadeiro herói.')
                 .addFields(
