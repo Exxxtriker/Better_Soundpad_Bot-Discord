@@ -159,7 +159,7 @@ module.exports = {
             });
 
             const collector = interaction.channel.createMessageComponentCollector({
-                time: 5 * 60 * 1000,
+                idle: 5 * 60 * 1000, // Muda de time para idle: só expira após 5 minutos sem interação
             });
 
             collector.on('collect', async (componentInteraction) => {
@@ -271,6 +271,12 @@ module.exports = {
 
             collector.on('end', async () => {
                 const cleanup = async () => {
+                    // Não limpa se ainda estiver tocando áudio ou pausado
+                    if (player && (player.state.status === AudioPlayerStatus.Playing || 
+                                 player.state.status === AudioPlayerStatus.Paused)) {
+                        return; // Mantém o menu e a conexão ativos se estiver tocando ou pausado
+                    }
+
                     delete activeMenus[guildId];
 
                     try {
@@ -283,6 +289,7 @@ module.exports = {
                         }
                     } catch (error) {
                         if (error.code === 10008) {
+                            console.log('Menu já foi deletado anteriormente');
                         } else {
                             console.error('Erro ao tentar deletar o menu:', error);
                         }
@@ -307,7 +314,7 @@ module.exports = {
                     });
 
                     const newCollector = interaction.channel.createMessageComponentCollector({
-                        time: 5 * 60 * 1000,
+                        idle: 5 * 60 * 1000, // Muda de time para idle: só expira após 5 minutos sem interação
                     });
 
                     newCollector.on('collect', async (ci) => {
