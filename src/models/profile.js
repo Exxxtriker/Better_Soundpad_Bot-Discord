@@ -8,7 +8,6 @@ const profileSchema = new mongoose.Schema({
     xp: { type: Number, default: 0 },
     money: { type: Number, default: 0 }, // Novo campo de moedas
     emblems: { type: [String], default: [] },
-    rewards: { type: [String], default: [] },
     customizations: {
         color: { type: String, default: '#00FF00' },
         title: { type: String, default: '' },

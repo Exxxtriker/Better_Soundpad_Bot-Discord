@@ -52,31 +52,31 @@ async function checkEmblems(profile) {
     // Regras mais difíceis para desbloqueio
     const emblemRules = [
         {
-            points: 50, level: 0, emblem: 'Novato', reward: 'Novato',
+            points: 50, level: 0, emblem: '<:d4:1412780743117246615> Novato',
         },
         {
-            points: 250, level: 5, emblem: 'Interativo', reward: 'Interativo',
+            points: 250, level: 5, emblem: '<:d6:1412780753904996435> Interativo',
         },
         {
-            points: 1000, level: 10, emblem: 'Herói', reward: 'Herói',
+            points: 1000, level: 10, emblem: '<:d8:1412780768740114543> Herói',
         },
         {
-            points: 3000, level: 20, emblem: 'Mestre', reward: 'Mestre',
+            points: 3000, level: 20, emblem: '<:d10:1412780786675089478> Mestre',
         },
         {
-            points: 7000, level: 35, emblem: 'Lendário', reward: 'Lendário',
+            points: 7000, level: 35, emblem: '<:d12:1412780918837477387> Lendário',
         },
         {
-            points: 15000, level: 50, emblem: 'Ancião', reward: 'Ancião',
+            points: 15000, level: 50, emblem: '<:d20:1412780936055230567> Ancião',
         },
         {
-            points: 30000, level: 70, emblem: 'Imortal', reward: 'Imortal',
+            points: 30000, level: 70, emblem: '<:rpggoldshield:1412780636032209009> Imortal',
         },
         {
-            points: 50000, level: 90, emblem: 'Deus', reward: 'Deus',
+            points: 50000, level: 90, emblem: '<:rpgbigsword:1412780685571129374> Deus',
         },
         {
-            points: 90000, level: 100, emblem: '☀️ Eterno ☀️', reward: '☀️ Eterno ☀️',
+            points: 90000, level: 100, emblem: '<:rpgwarhammer:1412780570290815046> Eterno',
         },
     ];
 

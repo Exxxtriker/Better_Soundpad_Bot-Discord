@@ -65,7 +65,6 @@ module.exports = {
                     { name: '🏅 Pontos', value: `${profile.points}`, inline: true },
                     { name: '📛 Título Personalizado', value: profile.customizations.title || 'Nenhum', inline: false },
                     { name: '🏵️ Emblemas', value: profile.emblems.length ? profile.emblems.join(' • ') : 'Nenhum', inline: false },
-                    { name: '🎁 Recompensas', value: profile.rewards.length ? profile.rewards.join(' • ') : 'Nenhuma', inline: false },
                     { name: '✨ XP', value: xpBar, inline: false },
                 )
                 .setFooter({
