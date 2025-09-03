@@ -16,14 +16,14 @@ function generateXPBar(currentXP, level) {
 }
 
 function levelTitle(level) {
-    if (level >= 90) return '👑 Overlord';
-    if (level >= 70) return '🌌 Imortal';
-    if (level >= 50) return '🔥 Ancião';
-    if (level >= 35) return '🌟 Lendário';
-    if (level >= 20) return '🛡️ Mestre';
-    if (level >= 10) return '⚔️ Herói';
-    if (level >= 5) return '🏹 Aventureiro';
-    return '🌱 Novato';
+    if (level >= 90) return '👑 Deidade Suprema';
+    if (level >= 70) return '🌌 Senhor dos Mundos';
+    if (level >= 50) return '🔥 Arcanista Ancestral';
+    if (level >= 35) return '⚔️ Campeão Lendário';
+    if (level >= 20) return '🛡️ Guardião da Aurora';
+    if (level >= 10) return '🏹 Cavaleiro Errante';
+    if (level >= 5) return '🌱 Discípulo Iniciado';
+    return '🐣 Aprendiz Desperto';
 }
 
 module.exports = {
