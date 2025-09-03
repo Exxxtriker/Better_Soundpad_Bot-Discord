@@ -29,9 +29,7 @@ function levelTitle(level) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('perfil')
-        .setDescription('Mostra o perfil lendário do aventureiro')
-        .addUserOption((option) => option.setName('usuario')
-            .setDescription('Escolha um aventureiro')),
+        .setDescription('Mostra o perfil lendário do aventureiro'),
 
     async execute(interaction) {
         try {
@@ -39,7 +37,8 @@ module.exports = {
                 await interaction.deferReply({ flags: 0 });
             }
 
-            const user = interaction.options.getUser('usuario') || interaction.user;
+            // Agora sempre pega o próprio usuário
+            const { user } = interaction;
             const profile = await getProfile(user.id);
 
             if (!profile) {
