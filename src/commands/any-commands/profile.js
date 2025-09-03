@@ -16,7 +16,7 @@ function generateXPBar(currentXP, level) {
 }
 
 function levelTitle(level) {
-    if (level >= 90) return '👑 Deus';
+    if (level >= 90) return '👑 Overlord';
     if (level >= 70) return '🌌 Imortal';
     if (level >= 50) return '🔥 Ancião';
     if (level >= 35) return '🌟 Lendário';
