@@ -272,8 +272,8 @@ module.exports = {
             collector.on('end', async () => {
                 const cleanup = async () => {
                     // Não limpa se ainda estiver tocando áudio ou pausado
-                    if (player && (player.state.status === AudioPlayerStatus.Playing || 
-                                 player.state.status === AudioPlayerStatus.Paused)) {
+                    if (player && (player.state.status === AudioPlayerStatus.Playing
+                                 || player.state.status === AudioPlayerStatus.Paused)) {
                         return; // Mantém o menu e a conexão ativos se estiver tocando ou pausado
                     }
 
