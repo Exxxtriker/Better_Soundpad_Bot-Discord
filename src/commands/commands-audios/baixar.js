@@ -22,7 +22,7 @@ module.exports = {
             .setRequired(true)
             .addChoices(
                 { name: 'Meme', value: 'Meme' },
-                { name: 'SoundTrack-Rpg', value: 'SoundTrack-Rpg' },
+                { name: 'SoundTrack', value: 'SoundTrack' },
                 { name: 'Music', value: 'Music' },
             ))
         .addStringOption((option) => option.setName('url')
