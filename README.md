@@ -5,6 +5,8 @@ Um bot para Discord que funciona como um **sound-pad**, permitindo:
 - Baixar músicas diretamente do YouTube  
 - Fazer upload de arquivos de áudio localmente  
 - Navegar por um menu interativo para escolher sons
+- Sistema de pontos e nivel via Database mongodb 
+- Sistema de emojis da aplicação 
 
 ---
 
