@@ -232,6 +232,9 @@ module.exports = {
                         await ci.update({ components: createRows() });
                         break;
                     case 'stop_audio':
+                        player?.stop();
+                        await ci.deferUpdate();
+                        break;
                     case 'clear_selection':
                         currentResource = null;
                         await ci.update({ components: createRows() });
