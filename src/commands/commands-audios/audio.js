@@ -247,10 +247,11 @@ module.exports = {
                 menuActive = false;
                 interaction.channel.client.off('messageDelete', onMessageDelete);
                 activeMenus.delete(guildId);
-                player?.stop();
-                connection.destroy();
-                currentResource = null;
-                sentMessage.delete().catch(() => {});
+
+                if (player.state.status === AudioPlayerStatus.Idle) {
+                    connection.destroy();
+                    sentMessage.delete().catch(() => {});
+                }
             });
         } catch (error) {
             console.error('Erro no comando:', error);
