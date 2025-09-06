@@ -154,12 +154,6 @@ module.exports = {
             }
         });
 
-        // --- Collector de interações ---
-        const collector = sentMessage.createMessageComponentCollector({ time: 30 * 60 * 1000 });
-        collector.on('end', () => {
-            // Não faz nada aqui, agora o idleTimeout gerencia o destroy
-        });
-
         // --- Detecta se a mensagem foi deletada manualmente ---
         client.on('messageDelete', (message) => {
             if (message.id === sentMessage.id) {
