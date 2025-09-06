@@ -38,10 +38,11 @@ module.exports = {
             return interaction.reply({ content: '⚠️ Nenhum áudio encontrado na pasta!', flags: 64 });
         }
 
+        // Cria o player
         const playerManager = new AudioPlayerManager(interaction.guild, voiceChannel, audioFolder, supportedExtensions);
         activePlayers.set(guildId, playerManager);
 
-        // --- Função para criar embed atualizado ---
+        // Função para criar embed atualizado
         const createEmbed = () => {
             const fields = [
                 { name: '💡 Dica', value: 'Use os botões abaixo para escolher o áudio que fará todos dançarem!' },
@@ -62,7 +63,7 @@ module.exports = {
                 .setFooter({ text: 'O bardo espera ansioso por sua escolha... 🎤' });
         };
 
-        // --- Função para criar componentes (menus e botões) ---
+        // Função para criar componentes (menus e botões)
         const createRows = () => {
             const rows = [];
             const totalPages = Math.ceil(audioNames.length / 25);
@@ -125,51 +126,18 @@ module.exports = {
 
         const { client } = interaction;
 
-        // --- Idle timeout logic ---
-        let idleTimeout;
-
-        const startIdleTimeout = () => {
-            if (idleTimeout) clearTimeout(idleTimeout);
-            idleTimeout = setTimeout(async () => {
-                if (playerManager.player.state.status === 'idle') {
-                    try {
-                        if (playerManager.connection && !playerManager.connection.destroyed) {
-                            playerManager.destroy();
-                        }
-                        activePlayers.delete(guildId);
-                        await sentMessage.delete().catch(() => {});
-                    } catch (err) {
-                        console.error('Erro ao destruir player após idle timeout:', err);
-                    }
-                }
-            }, 30 * 60 * 1000); // 30 minutos
-        };
-
-        // Observa mudanças no estado do player
-        playerManager.player.on('stateChange', (oldState, newState) => {
-            if (newState.status === 'idle') {
-                startIdleTimeout();
-            } else if (newState.status === 'playing') {
-                if (idleTimeout) clearTimeout(idleTimeout);
-            }
-        });
-
-        // --- Detecta se a mensagem foi deletada manualmente ---
-        client.on('messageDelete', (message) => {
+        // Listener para deletar o menu manualmente
+        const deleteListener = async (message) => {
             if (message.id === sentMessage.id) {
-                if (playerManager.player.state.status === 'idle') {
-                    if (idleTimeout) clearTimeout(idleTimeout);
-                    try {
-                        if (playerManager.connection && !playerManager.connection.destroyed) {
-                            playerManager.destroy();
-                        }
-                        activePlayers.delete(guildId);
-                        sentMessage.delete().catch(() => {});
-                    } catch (err) {
-                        console.error('Erro ao destruir player após delete:', err);
-                    }
-                }
+                // Destrói o player e remove do mapa
+                playerManager.destroy();
+                activePlayers.delete(guildId);
+                client.removeListener('messageDelete', deleteListener);
             }
-        });
+        };
+        client.on('messageDelete', deleteListener);
+
+        // Inicia idleTimeout automaticamente quando o player ficar ocioso
+        playerManager.startIdleTimeout();
     },
 };

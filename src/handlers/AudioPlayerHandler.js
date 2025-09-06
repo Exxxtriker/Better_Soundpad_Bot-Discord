@@ -31,14 +31,28 @@ class AudioPlayerManager {
         this.updateMessage = null; // função para atualizar embed e componentes
         this.sentMessage = null; // mensagem enviada para editar
 
+        this.idleTimeout = null; // Timeout para desconectar após ficar idle
+        this.idleTime = 30 * 60 * 1000; // 30 minutos padrão
+
         this.player.on(AudioPlayerStatus.Idle, () => {
+            // Se estiver em loop, toca de novo
             if (this.loopEnabled && this.currentResource) {
                 this.playResource(this.currentResource.metadata.path);
             } else {
                 this.currentResource = null;
                 this.currentAudioName = null;
+
+                // Atualiza a mensagem
                 if (this.updateMessage) this.updateMessage();
+
+                // Inicia o idleTimeout para desconectar após 30 minutos
+                this.startIdleTimeout();
             }
+        });
+
+        this.player.on('playing', () => {
+            // Se começar a tocar, cancela o idleTimeout
+            this.clearIdleTimeout();
         });
 
         this.player.on('error', (error) => {
@@ -85,6 +99,9 @@ class AudioPlayerManager {
         this.player.stop();
         this.currentResource = null;
         this.currentAudioName = null;
+
+        // Inicia o idleTimeout quando parar manualmente
+        this.startIdleTimeout();
     }
 
     setVolume(volume) {
@@ -99,9 +116,36 @@ class AudioPlayerManager {
         return this.loopEnabled;
     }
 
+    // Destrói a conexão com segurança
     destroy() {
-        this.stop();
-        this.connection.destroy();
+        this.clearIdleTimeout(); // limpa timeout
+        this.stop(); // para o player
+
+        if (this.connection && !this.connection.destroyed) {
+            this.connection.destroy();
+        }
+    }
+
+    // Inicia o idleTimeout para desconectar
+    startIdleTimeout() {
+        if (this.idleTimeout) return; // já existe um timeout ativo
+
+        this.idleTimeout = setTimeout(() => {
+            this.destroy();
+
+            // Deleta a mensagem caso exista
+            if (this.sentMessage && !this.sentMessage.deleted) {
+                this.sentMessage.delete().catch(() => {});
+            }
+        }, this.idleTime);
+    }
+
+    // Cancela o idleTimeout
+    clearIdleTimeout() {
+        if (this.idleTimeout) {
+            clearTimeout(this.idleTimeout);
+            this.idleTimeout = null;
+        }
     }
 }
 
