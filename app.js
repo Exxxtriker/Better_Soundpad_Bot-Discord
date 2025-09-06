@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const mongoose = require('mongoose');
 const { token } = require('./config');
 
+// Criação do client
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -15,6 +16,10 @@ const client = new Client({
 
 require('./src/handlers/eventsHandler')(client);
 require('./src/handlers/commandsHandler')(client);
+
+const interactionHandler = require('./src/handlers/audioInteractionHandler');
+
+client.on('interactionCreate', (interaction) => interactionHandler.execute(interaction));
 
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('✅ MongoDB conectado!'))
