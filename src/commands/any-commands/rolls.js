@@ -64,7 +64,7 @@ module.exports = {
                 }
             }
 
-            resultados.push(`\`${total}\` ⟵ ${expressaoFinal.join(' + ')}`);
+            resultados.push(`\` ${total} \` ⟵ ${expressaoFinal.join(' + ')}`);
         }
 
         await interaction.reply(resultados.join('\n'));
