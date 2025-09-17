@@ -99,16 +99,14 @@ module.exports = {
                         .setEmoji('⏸️'),
                     new ButtonBuilder().setCustomId('loop_toggle').setLabel(`Loop: ${playerManager.loopEnabled ? 'Ativado' : 'Desativado'}`).setStyle(playerManager.loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
                         .setEmoji('🔄'),
-                    new ButtonBuilder().setCustomId('volume_up').setLabel('+').setStyle(ButtonStyle.Secondary)
-                        .setEmoji('🔊'),
                 ),
                 new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('reload').setLabel('Recarregar').setStyle(ButtonStyle.Success)
                         .setEmoji('⏳'),
                     new ButtonBuilder().setCustomId('stop_audio').setLabel('Parar').setStyle(ButtonStyle.Danger)
                         .setEmoji('⏹️'),
-                    new ButtonBuilder().setCustomId('clear_selection').setLabel('Limpar escolha').setStyle(ButtonStyle.Secondary)
-                        .setEmoji('🗑️'),
+                    new ButtonBuilder().setCustomId('volume_up').setLabel('+').setStyle(ButtonStyle.Secondary)
+                        .setEmoji('🔊'),
                     new ButtonBuilder().setCustomId('volume_down').setLabel('-').setStyle(ButtonStyle.Secondary)
                         .setEmoji('🔉'),
                 ),

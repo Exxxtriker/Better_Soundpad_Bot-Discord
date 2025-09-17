@@ -75,12 +75,6 @@ module.exports = async (interaction) => {
             playerManager.reloadAudioList();
             await interaction.deferUpdate();
             break;
-
-        case 'clear_selection':
-            playerManager.stop();
-            if (playerManager.updateMessage) playerManager.updateMessage();
-            await interaction.deferUpdate();
-            break;
         }
     }
 };
