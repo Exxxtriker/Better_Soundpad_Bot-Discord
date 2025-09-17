@@ -1,3 +1,5 @@
+/* eslint-disable no-underscore-dangle */
+/* eslint-disable max-len */
 const {
     joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior,
 } = require('@discordjs/voice');
@@ -5,11 +7,12 @@ const path = require('path');
 const fs = require('fs');
 
 class AudioPlayerManager {
-    constructor(guild, voiceChannel, audioFolder, supportedExtensions) {
+    constructor(guild, voiceChannel, audioFolder, supportedExtensions, client) {
         this.guild = guild;
         this.voiceChannel = voiceChannel;
         this.audioFolder = audioFolder;
         this.supportedExtensions = supportedExtensions;
+        this.client = client; // Discord client para ouvir voiceStateUpdate
 
         this.connection = joinVoiceChannel({
             channelId: voiceChannel.id,
@@ -34,32 +37,68 @@ class AudioPlayerManager {
         this.idleTimeout = null; // Timeout para desconectar após ficar idle
         this.idleTime = 30 * 60 * 1000; // 30 minutos padrão
 
+        this.currentPage = 1; // paginação
+        this.itemsPerPage = 25; // áudios por página
+
+        // Lista de áudios
+        const files = fs.readdirSync(audioFolder).filter((f) => supportedExtensions.includes(path.extname(f)));
+        this.audioNames = [...new Set(files.map((f) => path.basename(f, path.extname(f))))];
+
+        // Listener do player
         this.player.on(AudioPlayerStatus.Idle, () => {
-            // Se estiver em loop, toca de novo
             if (this.loopEnabled && this.currentResource) {
                 this.playResource(this.currentResource.metadata.path);
             } else {
                 this.currentResource = null;
                 this.currentAudioName = null;
-
-                // Atualiza a mensagem
                 if (this.updateMessage) this.updateMessage();
-
-                // Inicia o idleTimeout para desconectar após 30 minutos
                 this.startIdleTimeout();
             }
         });
 
-        this.player.on('playing', () => {
-            // Se começar a tocar, cancela o idleTimeout
-            this.clearIdleTimeout();
-        });
+        this.player.on('playing', () => this.clearIdleTimeout());
 
         this.player.on('error', (error) => {
             console.error('Erro no player:', error);
             if (this.updateMessage) this.updateMessage();
         });
+
+        // 🔹 Monitora o canal automaticamente
+        // eslint-disable-next-line no-unused-vars
+        this.voiceStateListener = (oldState, newState) => {
+            if (oldState.guild.id !== guild.id) return;
+
+            const nonBotMembers = this.voiceChannel.members.filter((m) => !m.user.bot);
+            if (nonBotMembers.size === 0) {
+                // Ninguém humano no canal
+                this.destroy();
+                if (this.sentMessage && !this.sentMessage.deleted) {
+                    this.sentMessage.delete().catch(() => {});
+                }
+            }
+        };
+
+        this.client.on('voiceStateUpdate', this.voiceStateListener);
     }
+
+    // ----------------- Paginação e Reload -----------------
+    getTotalPages() {
+        return Math.ceil(this.audioNames.length / this.itemsPerPage) || 1;
+    }
+
+    getAudioPage() {
+        const start = (this.currentPage - 1) * this.itemsPerPage;
+        const end = start + this.itemsPerPage;
+        return this.audioNames.slice(start, end);
+    }
+
+    reloadAudioList() {
+        const files = fs.readdirSync(this.audioFolder).filter((f) => this.supportedExtensions.includes(path.extname(f)));
+        this.audioNames = [...new Set(files.map((f) => path.basename(f, path.extname(f))))];
+        this.currentPage = 1;
+        if (this.updateMessage) this.updateMessage();
+    }
+    // -------------------------------------------------------
 
     setUpdateMessageFunction(fn) {
         this.updateMessage = fn;
@@ -99,8 +138,6 @@ class AudioPlayerManager {
         this.player.stop();
         this.currentResource = null;
         this.currentAudioName = null;
-
-        // Inicia o idleTimeout quando parar manualmente
         this.startIdleTimeout();
     }
 
@@ -116,31 +153,31 @@ class AudioPlayerManager {
         return this.loopEnabled;
     }
 
-    // Destrói a conexão com segurança
     destroy() {
-        this.clearIdleTimeout(); // limpa timeout
-        this.stop(); // para o player
-
+        if (this._destroyed) return;
+        this._destroyed = true;
+        this.clearIdleTimeout();
+        this.stop();
         if (this.connection && !this.connection.destroyed) {
             this.connection.destroy();
         }
+        if (this.client && this.voiceStateListener) {
+            this.client.removeListener('voiceStateUpdate', this.voiceStateListener);
+            this.voiceStateListener = null;
+        }
     }
 
-    // Inicia o idleTimeout para desconectar
     startIdleTimeout() {
-        if (this.idleTimeout) return; // já existe um timeout ativo
+        if (this.idleTimeout) return;
 
         this.idleTimeout = setTimeout(() => {
             this.destroy();
-
-            // Deleta a mensagem caso exista
             if (this.sentMessage && !this.sentMessage.deleted) {
                 this.sentMessage.delete().catch(() => {});
             }
         }, this.idleTime);
     }
 
-    // Cancela o idleTimeout
     clearIdleTimeout() {
         if (this.idleTimeout) {
             clearTimeout(this.idleTimeout);

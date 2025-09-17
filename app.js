@@ -17,9 +17,9 @@ const client = new Client({
 require('./src/handlers/eventsHandler')(client);
 require('./src/handlers/commandsHandler')(client);
 
-const interactionHandler = require('./src/handlers/audioInteractionHandler');
+const audioInteractionHandler = require('./src/handlers/audioInteractionHandler');
 
-client.on('interactionCreate', (interaction) => interactionHandler.execute(interaction));
+client.on('interactionCreate', audioInteractionHandler);
 
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('✅ MongoDB conectado!'))

@@ -38,8 +38,8 @@ module.exports = {
             return interaction.reply({ content: '⚠️ Nenhum áudio encontrado na pasta!', flags: 64 });
         }
 
-        // Cria o player
-        const playerManager = new AudioPlayerManager(interaction.guild, voiceChannel, audioFolder, supportedExtensions);
+        // Cria o player com monitoramento do canal
+        const playerManager = new AudioPlayerManager(interaction.guild, voiceChannel, audioFolder, supportedExtensions, interaction.client);
         activePlayers.set(guildId, playerManager);
 
         // Função para criar embed atualizado
@@ -63,16 +63,18 @@ module.exports = {
                 .setFooter({ text: 'O bardo espera ansioso por sua escolha... 🎤' });
         };
 
-        // Função para criar componentes (menus e botões)
+        // Função para criar componentes (menus e botões) com paginação dinâmica
         const createRows = () => {
             const rows = [];
-            const totalPages = Math.ceil(audioNames.length / 25);
-            const slice = audioNames.slice(0, 25);
+            const totalPages = playerManager.getTotalPages();
+            const start = (playerManager.currentPage - 1) * playerManager.itemsPerPage;
+            const end = start + playerManager.itemsPerPage;
+            const slice = playerManager.audioNames.slice(start, end);
 
             if (slice.length > 0) {
                 const selectMenu = new StringSelectMenuBuilder()
                     .setCustomId('audio_select')
-                    .setPlaceholder(`Selecione um áudio (página 1/${totalPages})`)
+                    .setPlaceholder(`Selecione um áudio (página ${playerManager.currentPage}/${totalPages})`)
                     .addOptions(slice.map((name) => ({
                         label: name.length > 100 ? `${name.slice(0, 97)}...` : name,
                         value: name,
@@ -82,6 +84,14 @@ module.exports = {
             }
 
             rows.push(
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('prev_page').setLabel('Página anterior').setStyle(ButtonStyle.Secondary)
+                        .setEmoji('◀️'),
+                    new ButtonBuilder()
+                        .setCustomId('next_page').setLabel('Próxima página').setStyle(ButtonStyle.Secondary)
+                        .setEmoji('▶️'),
+                ),
                 new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('resume_audio').setLabel('Play').setStyle(ButtonStyle.Success)
                         .setEmoji('▶️'),
@@ -124,20 +134,17 @@ module.exports = {
             }
         });
 
-        const { client } = interaction;
-
         // Listener para deletar o menu manualmente
         const deleteListener = async (message) => {
             if (message.id === sentMessage.id) {
-                // Destrói o player e remove do mapa
+                interaction.client.removeListener('messageDelete', deleteListener);
                 playerManager.destroy();
                 activePlayers.delete(guildId);
-                client.removeListener('messageDelete', deleteListener);
             }
         };
-        client.on('messageDelete', deleteListener);
+        interaction.client.on('messageDelete', deleteListener);
 
-        // Inicia idleTimeout automaticamente quando o player ficar ocioso
+        // Inicia idleTimeout automaticamente
         playerManager.startIdleTimeout();
     },
 };
