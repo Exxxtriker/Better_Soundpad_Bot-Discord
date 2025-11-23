@@ -57,15 +57,23 @@ module.exports = {
 
             // Configuração do FFmpeg para capturar o áudio da saída do sistema
             const ffmpeg = spawn('ffmpeg', [
-                '-f', 'dshow', // Dispositivo de captura de áudio
-                '-i', 'audio=CABLE Output (VB-Audio Virtual Cable)', // Instale o virtual cable
-                '-ac', '2', // Número de canais (stereo)
-                '-ar', '48000', // Taxa de amostragem (Discord usa 48kHz)
-                '-c:a', 'libopus', // Codificação Opus
-                '-f', 'opus', // Formato de saída Opus
-                '-rtbufsize', '10M', // Tamanho do buffer ajustado
-                '-loglevel', 'error', // Suprime tudo, exceto erros
-                'pipe:1', // Saída para pipe
+                '-fflags', 'nobuffer', // Remove buffers internos
+                '-flags', 'low_delay', // Latência mais baixa possível
+                '-thread_queue_size', '2048', // Evita travar o stream
+
+                '-f', 'dshow', // Captura do dispositivo
+                '-i', 'audio=CABLE Output (VB-Audio Virtual Cable)',
+
+                '-ac', '2', // Stereo
+                '-ar', '48000', // Sample rate correto do Discord
+                '-c:a', 'libopus', // Codec Opus
+                '-frame_duration', '5', // Baixa latência + qualidade estável
+                // você pode testar '2.5' também
+
+                '-flush_packets', '1', // Mantém fluxo contínuo
+                '-f', 'opus', // Saída Opus
+                '-loglevel', 'error',
+                'pipe:1', // Saída para o pipe
             ]);
 
             ffmpeg.on('close', (code) => {
@@ -91,7 +99,7 @@ module.exports = {
                 // ...existing code...
             });
 
-            await interaction.editReply(`Reproduzindo o áudio de "Haruka" no canal de voz: ${voiceChannel.name}`);
+            await interaction.editReply(`Reproduzindo o áudio do Spotify no canal de voz: ${voiceChannel.name}`);
 
             player.on(AudioPlayerStatus.Idle, () => {
                 // ...existing code...
