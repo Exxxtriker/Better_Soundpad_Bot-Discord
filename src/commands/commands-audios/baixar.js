@@ -48,20 +48,41 @@ module.exports = {
             const filePath = path.join(audioFolderPath, `${fileName}.mp3`);
             const ytDlpPath = path.join(__dirname, 'yt-dlp.exe');
 
+            const cookiesPath = path.join(__dirname, 'cookies.txt');
+
             execFile(ytDlpPath, [
+                '--cookies', cookiesPath,
+
+                '--extractor-args',
+                'youtube:player_client=android',
+
+                '--user-agent',
+                'Mozilla/5.0',
+
                 '-x',
                 '--audio-format', 'mp3',
+
                 '--quiet',
                 '--no-warnings',
-                '-o', filePath,
+
+                '-o',
+                `${filePath}.%(ext)s`,
+
                 url,
             ], (error, stdout, stderr) => {
                 if (error) {
                     console.error('Erro no yt-dlp:', stderr || error);
-                    return interaction.followUp({ content: '❌ Falha ao baixar áudio com yt-dlp', flags: 64 });
+
+                    return interaction.followUp({
+                        content: `❌ Falha ao baixar áudio\n\`\`\`${stderr || error.message}\`\`\``,
+                        flags: 64,
+                    });
                 }
 
-                interaction.followUp({ content: `✅ Áudio salvo como **${fileName}.mp3**`, flags: 64 });
+                interaction.followUp({
+                    content: `✅ Áudio salvo como **${fileName}.mp3**`,
+                    flags: 64,
+                });
             });
         } catch (err) {
             console.error('Erro ao processar:', err);

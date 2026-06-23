@@ -14,10 +14,10 @@ module.exports = {
         .setDMPermission(false), // Desabilita o comando na DM
 
     async execute(interaction) {
-        // Deferindo a resposta imediatamente
-        await interaction.deferReply();
+        // Deferindo a resposta imediatamente (ephemeral)
+        await interaction.deferReply({ flags: 64 });
 
-        if (interaction.user.id !== '335012394226941966') {
+        if (interaction.user.id !== '1467356224487161876') {
             return interaction.editReply('Você não tem permissão para usar este comando!');
         }
 
