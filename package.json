@@ -4,11 +4,19 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "start": "cls && node slashBuilder.js && nodemon app.js --ignore datagame.json --ignore config.json"
+    "start": "node app.js",
+    "dev": "nodemon app.js --ignore config.json",
+    "deploy:commands": "node slashBuilder.js",
+    "lint": "eslint app.js config.js slashBuilder.js src scripts test",
+    "validate": "node scripts/validateCommands.js",
+    "test": "npm run lint && npm run validate && node --test --test-isolation=none test/security.test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@discordjs/builders": "^1.7.0",
     "@discordjs/opus": "^0.10.0",

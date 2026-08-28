@@ -45,6 +45,6 @@ module.exports = {
         // Definir o status do bot
         await bot.user.setStatus('online');
 
-        console.log(`✅ Login successfully on ${bot.user.username}#${bot.user.discriminator} - Estou em ${bot.guilds.cache.size} servidores`);
+        console.log(`✅ Login realizado como ${bot.user.tag} - Estou em ${bot.guilds.cache.size} servidores`);
     },
 };

@@ -1,15 +1,16 @@
-/* eslint-disable no-nested-ternary */
-/* eslint-disable no-empty */
 const {
-    SlashCommandBuilder,
     ActionRowBuilder,
-    StringSelectMenuBuilder,
-    EmbedBuilder,
     ButtonBuilder,
     ButtonStyle,
+    EmbedBuilder,
+    ModalBuilder,
+    SlashCommandBuilder,
+    StringSelectMenuBuilder,
+    TextInputBuilder,
+    TextInputStyle,
 } = require('discord.js');
-const { getProfile } = require('../../utils/profileManager');
 const Profile = require('../../models/profile');
+const { getProfile } = require('../../utils/profileManager');
 
 const COLORS = {
     Verde: '#00FF00',
@@ -19,26 +20,34 @@ const COLORS = {
     Roxo: '#800080',
 };
 
+function createBackRow() {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('back_to_menu')
+            .setLabel('⬅️ Voltar')
+            .setStyle(ButtonStyle.Secondary),
+    );
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('customizar')
         .setDescription('🎨 Personalize seu perfil lendário'),
 
     async execute(interaction) {
-        try {
-            const userId = interaction.user.id;
-            let profile = await getProfile(userId);
+        const userId = interaction.user.id;
+        let collector;
 
+        try {
+            let profile = await getProfile(userId);
             if (!profile) {
-                profile = new Profile({
-                    userId,
-                    username: interaction.user.username,
-                    customizations: {},
-                });
-                await profile.save();
+                profile = await Profile.findOneAndUpdate(
+                    { userId },
+                    { $set: { username: interaction.user.username }, $setOnInsert: { userId } },
+                    { new: true, upsert: true, setDefaultsOnInsert: true },
+                );
             }
 
-            // Função para renderizar o menu principal
             const renderMainMenu = () => {
                 const menu = new StringSelectMenuBuilder()
                     .setCustomId('profile_custom')
@@ -48,179 +57,133 @@ module.exports = {
                         { label: '🏷️ Título Personalizado', value: 'title', description: 'Defina um título único' },
                     ]);
 
-                const row = new ActionRowBuilder().addComponents(menu);
-
                 const embed = new EmbedBuilder()
                     .setTitle('⚒️ Painel de Customização')
                     .setColor(profile.customizations.color || '#5865F2')
-                    .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
-                    .setDescription('Selecione uma opção no menu abaixo para customizar o seu perfil lendário.')
+                    .setThumbnail(interaction.user.displayAvatarURL())
+                    .setDescription('Selecione uma opção abaixo para customizar o seu perfil lendário.')
                     .setFooter({
                         text: '⚔️ Torne seu perfil único!',
                         iconURL: interaction.client.user.displayAvatarURL(),
                     });
 
-                return { embeds: [embed], components: [row] };
+                return {
+                    embeds: [embed],
+                    components: [new ActionRowBuilder().addComponents(menu)],
+                };
             };
 
-            await interaction.reply({
-                ...renderMainMenu(),
-                flags: 64,
+            await interaction.reply({ ...renderMainMenu(), flags: 64 });
+            const replyMessage = await interaction.fetchReply();
+            collector = replyMessage.createMessageComponentCollector({
+                filter: (componentInteraction) => componentInteraction.user.id === userId,
+                time: 120_000,
             });
 
-            // collector de menus/botões
-            const collector = interaction.channel.createMessageComponentCollector({
-                filter: (i) => i.user.id === userId,
-                time: 120000,
-            });
+            collector.on('collect', async (componentInteraction) => {
+                try {
+                    if (componentInteraction.customId === 'profile_custom') {
+                        const choice = componentInteraction.values[0];
 
-            // variável para guardar o coletor de mensagens (título)
-            let messageCollector = null;
+                        if (choice === 'color') {
+                            const colorMenu = new StringSelectMenuBuilder()
+                                .setCustomId('profile_color')
+                                .setPlaceholder('⬇️ Selecione uma cor')
+                                .addOptions(Object.keys(COLORS).map((color) => ({
+                                    label: color,
+                                    value: color,
+                                    emoji: {
+                                        Verde: '🟢', Azul: '🔵', Dourado: '🌟', Vermelho: '🔴', Roxo: '🟣',
+                                    }[color],
+                                })));
 
-            collector.on('collect', async (i) => {
-                if (i.customId === 'profile_custom') {
-                    const choice = i.values[0];
-
-                    // 🎨 Escolha de cor
-                    if (choice === 'color') {
-                        const colorMenu = new StringSelectMenuBuilder()
-                            .setCustomId('profile_color')
-                            .setPlaceholder('⬇️ Selecione uma cor')
-                            .addOptions(
-                                Object.keys(COLORS).map((c) => ({
-                                    label: c,
-                                    value: c,
-                                    emoji:
-                                        c === 'Verde' ? '🟢'
-                                            : c === 'Azul' ? '🔵'
-                                                : c === 'Dourado' ? '🌟'
-                                                    : c === 'Vermelho' ? '🔴'
-                                                        : '🟣',
-                                })),
-                            );
-
-                        const colorRow = new ActionRowBuilder().addComponents(colorMenu);
-
-                        // botão voltar
-                        const backRow = new ActionRowBuilder().addComponents(
-                            new ButtonBuilder()
-                                .setCustomId('back_to_menu')
-                                .setLabel('⬅️ Voltar')
-                                .setStyle(ButtonStyle.Secondary),
-                        );
-
-                        return i.update({
-                            embeds: [
-                                new EmbedBuilder()
-                                    .setTitle('🎨 Escolha uma cor')
-                                    .setDescription('Selecione abaixo a nova cor para o seu perfil.')
-                                    .setColor(profile.customizations.color || '#5865F2'),
-                            ],
-                            components: [colorRow, backRow],
-                        });
-                    }
-
-                    // 🏷️ Escolha de título
-                    if (choice === 'title') {
-                        await i.update({
-                            embeds: [
-                                new EmbedBuilder()
-                                    .setTitle('🏷️ Defina um título personalizado')
-                                    .setDescription('Digite no chat o título que deseja (máx **30 caracteres**).')
-                                    .setColor(profile.customizations.color || '#5865F2'),
-                            ],
-                            components: [
-                                new ActionRowBuilder().addComponents(
-                                    new ButtonBuilder()
-                                        .setCustomId('back_to_menu')
-                                        .setLabel('⬅️ Voltar')
-                                        .setStyle(ButtonStyle.Secondary),
-                                ),
-                            ],
-                        });
-
-                        // inicia o coletor de mensagens
-                        const filter = (m) => m.author.id === userId;
-                        messageCollector = interaction.channel.createMessageCollector({
-                            filter,
-                            max: 1,
-                            time: 60000,
-                        });
-
-                        messageCollector.on('collect', async (msg) => {
-                            let newTitle = msg.content;
-                            if (newTitle.length > 30) newTitle = newTitle.slice(0, 30);
-
-                            profile.customizations.title = newTitle;
-                            await profile.save();
-
-                            await interaction.followUp({
+                            await componentInteraction.update({
                                 embeds: [
                                     new EmbedBuilder()
-                                        .setColor('#57F287')
-                                        .setDescription(`✅ Seu título foi atualizado para: **${newTitle}**`),
+                                        .setTitle('🎨 Escolha uma cor')
+                                        .setDescription('Selecione abaixo a nova cor para o seu perfil.')
+                                        .setColor(profile.customizations.color || '#5865F2'),
                                 ],
-                                flags: 64,
+                                components: [
+                                    new ActionRowBuilder().addComponents(colorMenu),
+                                    createBackRow(),
+                                ],
                             });
+                            return;
+                        }
+
+                        const modalId = `profile_title_${interaction.id}`;
+                        const titleInput = new TextInputBuilder()
+                            .setCustomId('profile_title_input')
+                            .setLabel('Título personalizado')
+                            .setStyle(TextInputStyle.Short)
+                            .setMaxLength(30)
+                            .setRequired(true);
+                        if (profile.customizations.title) {
+                            titleInput.setValue(profile.customizations.title);
+                        }
+                        const modal = new ModalBuilder()
+                            .setCustomId(modalId)
+                            .setTitle('Título do perfil')
+                            .addComponents(new ActionRowBuilder().addComponents(titleInput));
+
+                        await componentInteraction.showModal(modal);
+                        const modalInteraction = await componentInteraction.awaitModalSubmit({
+                            filter: (submission) => submission.customId === modalId && submission.user.id === userId,
+                            time: 60_000,
                         });
-
-                        messageCollector.on('end', async (collected) => {
-                            if (collected.size === 0) {
-                                await interaction.followUp({
-                                    embeds: [
-                                        new EmbedBuilder()
-                                            .setColor('#ED4245')
-                                            .setDescription('❌ Tempo esgotado. Tente novamente.'),
-                                    ],
-                                    flags: 64,
-                                });
-                            }
+                        profile.customizations.title = modalInteraction.fields
+                            .getTextInputValue('profile_title_input')
+                            .trim()
+                            .slice(0, 30);
+                        await profile.save();
+                        await modalInteraction.update({
+                            embeds: [
+                                new EmbedBuilder()
+                                    .setColor('#57F287')
+                                    .setDescription(`✅ Seu título foi atualizado para: **${profile.customizations.title}**`),
+                            ],
+                            components: [createBackRow()],
                         });
+                        return;
                     }
-                }
 
-                // 🎨 Atualização de cor
-                if (i.customId === 'profile_color') {
-                    const newColor = i.values[0];
-                    profile.customizations.color = COLORS[newColor];
-                    await profile.save();
-
-                    return i.update({
-                        embeds: [
-                            new EmbedBuilder()
-                                .setColor(COLORS[newColor])
-                                .setDescription(`✅ A cor do seu perfil foi alterada para: **${newColor}**`),
-                        ],
-                        components: [],
-                    });
-                }
-
-                // ⬅️ Voltar
-                if (i.customId === 'back_to_menu') {
-                    // se tiver coletor de título ativo, cancela
-                    if (messageCollector) {
-                        messageCollector.stop();
-                        messageCollector = null;
+                    if (componentInteraction.customId === 'profile_color') {
+                        const colorName = componentInteraction.values[0];
+                        profile.customizations.color = COLORS[colorName];
+                        await profile.save();
+                        await componentInteraction.update({
+                            embeds: [
+                                new EmbedBuilder()
+                                    .setColor(COLORS[colorName])
+                                    .setDescription(`✅ A cor do seu perfil foi alterada para: **${colorName}**`),
+                            ],
+                            components: [createBackRow()],
+                        });
+                        return;
                     }
-                    return i.update(renderMainMenu());
+
+                    if (componentInteraction.customId === 'back_to_menu') {
+                        await componentInteraction.update(renderMainMenu());
+                    }
+                } catch (error) {
+                    if (error.code !== 'InteractionCollectorError') {
+                        console.error('Erro em componente de customização:', error);
+                    }
                 }
             });
 
-            collector.on('end', async () => {
-                try {
-                    await interaction.editReply({ components: [] });
-                } catch {}
+            collector.on('end', () => {
+                interaction.editReply({ components: [] }).catch(() => {});
             });
         } catch (error) {
+            collector?.stop();
             console.error('Erro no comando /customizar:', error);
-            await interaction.reply({
-                embeds: [
-                    new EmbedBuilder()
-                        .setColor('#ED4245')
-                        .setDescription('❌ Ocorreu um erro ao tentar customizar seu perfil.'),
-                ],
-                flags: 64,
-            });
+            const response = { content: '❌ Ocorreu um erro ao customizar o perfil.' };
+            if (interaction.replied || interaction.deferred) return interaction.followUp({ ...response, flags: 64 });
+            return interaction.reply({ ...response, flags: 64 });
         }
+
+        return undefined;
     },
 };

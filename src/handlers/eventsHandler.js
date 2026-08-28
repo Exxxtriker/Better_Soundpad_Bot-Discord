@@ -8,8 +8,13 @@ module.exports = async (client) => {
     for (const file of eventsFiles) {
         const fileOf = path.join(eventsPath, file);
         const event = require(fileOf);
+        const execute = (...args) => {
+            Promise.resolve(event.execute(...args)).catch((error) => {
+                console.error(`Erro no evento ${event.name}:`, error);
+            });
+        };
 
-        if (event.once) client.once(event.name, (...args) => event.execute(...args));
-        else client.on(event.name, (...args) => event.execute(...args));
+        if (event.once) client.once(event.name, execute);
+        else client.on(event.name, execute);
     }
 };

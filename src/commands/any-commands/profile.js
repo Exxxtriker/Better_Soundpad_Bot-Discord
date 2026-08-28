@@ -3,7 +3,7 @@ const { getProfile } = require('../../utils/profileManager');
 
 function generateXPBar(currentXP, level) {
     const totalXP = level * 100;
-    const percent = currentXP / totalXP;
+    const percent = Math.min(1, Math.max(0, currentXP / totalXP));
 
     const barLength = 20;
     const filledLength = Math.round(barLength * percent);

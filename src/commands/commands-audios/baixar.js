@@ -5,10 +5,17 @@
  * Repository: https://github.com/yt-dlp/yt-dlp
  * License: The Unlicense
  */
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionsBitField } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
+const {
+    MAX_AUDIO_BYTES,
+    MAX_AUDIO_DURATION_SECONDS,
+    resolveInside,
+    sanitizeBaseName,
+    validateYouTubeUrl,
+} = require('../../utils/audioFiles');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -28,65 +35,97 @@ module.exports = {
         .addStringOption((option) => option.setName('url')
             .setDescription('URL do vídeo do YouTube')
             .setRequired(true))
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild)
         .setDMPermission(false),
 
     async execute(interaction) {
-        const nome = interaction.options.getString('nome');
-        const tipo = interaction.options.getString('tipo');
-        const url = interaction.options.getString('url');
-
-        const fileName = `${tipo}-${nome}`;
-
-        await interaction.reply({ content: '🎶 Baixando e convertendo, aguarde...', flags: 64 });
-
         try {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+                return interaction.reply({ content: '❌ Você precisa da permissão Gerenciar Servidor.', flags: 64 });
+            }
+
+            const nome = sanitizeBaseName(interaction.options.getString('nome'));
+            const tipo = interaction.options.getString('tipo');
+            const url = validateYouTubeUrl(interaction.options.getString('url'));
+            const fileName = `${tipo}-${nome}`;
+
+            await interaction.reply({ content: '🎶 Baixando e convertendo, aguarde...', flags: 64 });
+
             const audioFolderPath = path.join(__dirname, 'audios');
             if (!fs.existsSync(audioFolderPath)) {
                 fs.mkdirSync(audioFolderPath, { recursive: true });
             }
 
-            const filePath = path.join(audioFolderPath, `${fileName}.mp3`);
+            const outputTemplate = resolveInside(audioFolderPath, `${fileName}.%(ext)s`);
+            const finalPath = resolveInside(audioFolderPath, `${fileName}.mp3`);
+            if (fs.existsSync(finalPath)) {
+                return interaction.followUp({ content: '❌ Já existe um áudio com esse nome.', flags: 64 });
+            }
             const ytDlpPath = path.join(__dirname, 'yt-dlp.exe');
-
             const cookiesPath = path.join(__dirname, 'cookies.txt');
-
-            execFile(ytDlpPath, [
-                '--cookies', cookiesPath,
-
+            const args = [
                 '--extractor-args',
                 'youtube:player_client=android',
-
                 '--user-agent',
                 'Mozilla/5.0',
-
                 '-x',
                 '--audio-format', 'mp3',
-
+                '--no-playlist',
+                '--no-overwrites',
+                '--max-filesize', '25M',
+                '--match-filter', `duration <= ${MAX_AUDIO_DURATION_SECONDS}`,
                 '--quiet',
                 '--no-warnings',
-
                 '-o',
-                `${filePath}.%(ext)s`,
-
+                outputTemplate,
                 url,
-            ], (error, stdout, stderr) => {
-                if (error) {
-                    console.error('Erro no yt-dlp:', stderr || error);
+            ];
 
-                    return interaction.followUp({
-                        content: `❌ Falha ao baixar áudio\n\`\`\`${stderr || error.message}\`\`\``,
+            if (fs.existsSync(cookiesPath)) args.unshift('--cookies', cookiesPath);
+
+            execFile(ytDlpPath, args, { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 }, async (error, stdout, stderr) => {
+                try {
+                    if (error) {
+                        console.error('Erro no yt-dlp:', stderr || stdout || error);
+                        await interaction.followUp({
+                            content: '❌ Falha ao baixar o áudio. Confira a URL, a duração e o limite de 25 MB.',
+                            flags: 64,
+                        });
+                        return;
+                    }
+
+                    if (!fs.existsSync(finalPath)) {
+                        await interaction.followUp({
+                            content: '❌ O download terminou sem gerar o arquivo esperado.',
+                            flags: 64,
+                        });
+                        return;
+                    }
+
+                    if (fs.statSync(finalPath).size > MAX_AUDIO_BYTES) {
+                        fs.unlinkSync(finalPath);
+                        await interaction.followUp({ content: '❌ O áudio convertido ultrapassou 25 MB.', flags: 64 });
+                        return;
+                    }
+
+                    await interaction.followUp({
+                        content: `✅ Áudio salvo como **${fileName}.mp3**`,
                         flags: 64,
                     });
+                } catch (callbackError) {
+                    console.error('Erro ao finalizar download:', callbackError);
+                    await interaction.followUp({
+                        content: '❌ O download terminou, mas não foi possível finalizar o arquivo.',
+                        flags: 64,
+                    }).catch(() => {});
                 }
-
-                interaction.followUp({
-                    content: `✅ Áudio salvo como **${fileName}.mp3**`,
-                    flags: 64,
-                });
             });
+            return undefined;
         } catch (err) {
             console.error('Erro ao processar:', err);
-            await interaction.followUp({ content: '❌ Ocorreu um erro ao processar o vídeo.', flags: 64 });
+            const response = { content: `❌ ${err.message || 'Não foi possível processar o vídeo.'}` };
+            if (interaction.deferred || interaction.replied) return interaction.followUp({ ...response, flags: 64 });
+            return interaction.reply({ ...response, flags: 64 });
         }
     },
 };

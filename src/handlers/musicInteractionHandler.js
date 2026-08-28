@@ -1,95 +1,122 @@
-const { AudioPlayerStatus } = require('@discordjs/voice');
-const { guildQueues, playerMessages, createEmbed, createRows, updateMessage, playNext } = require('../commands/music/play');
+const {
+    advanceCustomQueue,
+    getDistubeQueue,
+    guildQueues,
+    playerMessages,
+    stopCustomQueue,
+    updateMessage,
+} = require('../commands/music/play');
+
+const MUSIC_BUTTONS = new Set([
+    'music_prev',
+    'music_pause',
+    'music_skip',
+    'music_stop',
+    'music_loop',
+    'music_shuffle',
+    'music_queue',
+]);
 
 module.exports = async (interaction) => {
-    if (!interaction.isButton()) return;
+    if (!interaction.isButton() || !MUSIC_BUTTONS.has(interaction.customId)) return;
+    if (!interaction.inGuild()) return;
 
-    const musicButtons = [
-        'music_prev', 'music_pause', 'music_skip', 'music_stop',
-        'music_loop', 'music_shuffle', 'music_queue',
-    ];
+    const { guildId } = interaction;
+    const customQueue = guildQueues.get(guildId);
+    const distubeQueue = getDistubeQueue(guildId);
+    const queue = customQueue ?? distubeQueue;
 
-    if (!musicButtons.includes(interaction.customId)) return;
+    if (!queue) {
+        await interaction.reply({ content: '❌ Não há nenhuma música tocando no momento!', flags: 64 });
+        return;
+    }
+
+    const voiceChannelId = customQueue?.connection?.joinConfig?.channelId
+        ?? distubeQueue?.voiceChannel?.id;
+    if (!interaction.member.voice.channelId || interaction.member.voice.channelId !== voiceChannelId) {
+        await interaction.reply({
+            content: '⚠️ Entre no mesmo canal de voz do bot para usar estes controles.',
+            flags: 64,
+        });
+        return;
+    }
 
     await interaction.deferUpdate();
 
-    const guildId = interaction.guild.id;
-    const queue = guildQueues.get(guildId);
-
-    const noQueue = () => interaction.followUp({ content: '❌ Não há nenhuma música tocando no momento!', flags: 64 });
-
-    switch (interaction.customId) {
+    try {
+        switch (interaction.customId) {
         case 'music_pause':
-            if (!queue) return noQueue();
-            if (queue.paused) {
-                queue.player.unpause();
-                queue.paused = false;
-            } else {
-                queue.player.pause();
-                queue.paused = true;
-            }
+            if (customQueue) {
+                if (customQueue.paused) customQueue.player.unpause();
+                else customQueue.player.pause();
+                customQueue.paused = !customQueue.paused;
+            } else if (distubeQueue.paused) await distubeQueue.resume();
+            else await distubeQueue.pause();
             await updateMessage(guildId);
             break;
 
         case 'music_skip':
-            if (!queue) return noQueue();
-            queue.currentProcesses?.ytdlp?.kill();
-            queue.currentProcesses?.ffmpeg?.kill();
-            queue.songs.shift();
-            await playNext(guildId, interaction.channel);
+            if (customQueue) await advanceCustomQueue(guildId, interaction.channel);
+            else await distubeQueue.skip();
+            await updateMessage(guildId);
             break;
 
         case 'music_prev':
-            if (!queue) return noQueue();
-            if (queue.history.length === 0) {
-                return interaction.followUp({ content: '⚠️ Não há música anterior!', flags: 64 });
+            if (customQueue) {
+                const changed = await advanceCustomQueue(guildId, interaction.channel, 'previous');
+                if (!changed) throw new Error('Não há música anterior.');
+            } else {
+                await distubeQueue.previous();
             }
-            queue.currentProcesses?.ytdlp?.kill();
-            queue.currentProcesses?.ffmpeg?.kill();
-            queue.songs.unshift(queue.history.pop());
-            await playNext(guildId, interaction.channel);
+            await updateMessage(guildId);
             break;
 
         case 'music_stop':
-            if (!queue) return noQueue();
-            queue.songs = [];
-            queue.currentProcesses?.ytdlp?.kill();
-            queue.currentProcesses?.ffmpeg?.kill();
-            queue.player.stop();
-            queue.connection.destroy();
-            guildQueues.delete(guildId);
+            if (customQueue) await stopCustomQueue(guildId);
+            else await distubeQueue.stop();
             playerMessages.delete(guildId);
             await interaction.message.delete().catch(() => {});
             break;
 
-        case 'music_loop': {
-            if (!queue) return noQueue();
-            const modes = ['off', 'song', 'queue'];
-            const next = modes[(modes.indexOf(queue.loop) + 1) % modes.length];
-            queue.loop = next;
+        case 'music_loop':
+            if (customQueue) {
+                const modes = ['off', 'song', 'queue'];
+                customQueue.loop = modes[(modes.indexOf(customQueue.loop) + 1) % modes.length];
+            } else {
+                distubeQueue.setRepeatMode();
+            }
             await updateMessage(guildId);
             break;
-        }
 
-        case 'music_shuffle': {
-            if (!queue) return noQueue();
-            const current = queue.songs.shift();
-            queue.songs.sort(() => Math.random() - 0.5);
-            queue.songs.unshift(current);
+        case 'music_shuffle':
+            if (customQueue) {
+                const current = customQueue.songs.shift();
+                customQueue.songs.sort(() => Math.random() - 0.5);
+                if (current) customQueue.songs.unshift(current);
+            } else {
+                await distubeQueue.shuffle();
+            }
             await updateMessage(guildId);
             await interaction.followUp({ content: '🔀 Fila embaralhada!', flags: 64 });
             break;
-        }
 
         case 'music_queue': {
-            if (!queue || queue.songs.length === 0) return noQueue();
-            const list = queue.songs
-                .slice(0, 10)
-                .map((s, i) => `${i === 0 ? '▶️' : `\`${i}.\``} **${s.title}** \`${s.formattedDuration}\``)
-                .join('\n');
-            const extra = queue.songs.length > 10 ? `\n...e mais **${queue.songs.length - 10}** músicas.` : '';
+            const songs = queue.songs ?? [];
+            if (songs.length === 0) throw new Error('A fila está vazia.');
+            const list = songs.slice(0, 10).map((song, index) => {
+                const position = index === 0 ? '▶️' : `\`${index}.\``;
+                return `${position} **${song.title ?? song.name}** \`${song.formattedDuration ?? '?:??'}\``;
+            }).join('\n');
+            const extra = songs.length > 10 ? `\n...e mais **${songs.length - 10}** músicas.` : '';
             await interaction.followUp({ content: `🎶 **Fila atual:**\n${list}${extra}`, flags: 64 });
             break;
         }
+
+        default:
+            break;
+        }
+    } catch (error) {
+        console.error('Erro ao controlar player de música:', error);
+        await interaction.followUp({ content: `❌ ${error.message || 'Não foi possível executar o controle.'}`, flags: 64 });
     }
 };

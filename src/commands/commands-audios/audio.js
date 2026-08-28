@@ -1,6 +1,12 @@
 /* eslint-disable max-len */
 const {
-    SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    EmbedBuilder,
+    PermissionsBitField,
+    SlashCommandBuilder,
+    StringSelectMenuBuilder,
 } = require('discord.js');
 const path = require('path');
 const fs = require('fs');
@@ -25,21 +31,43 @@ module.exports = {
             return interaction.reply({ content: '⚠️ Você precisa estar em um canal de voz para usar este comando!', flags: 64 });
         }
 
+        const botPermissions = voiceChannel.permissionsFor(interaction.guild.members.me);
+        if (!botPermissions?.has([PermissionsBitField.Flags.Connect, PermissionsBitField.Flags.Speak])) {
+            return interaction.reply({
+                content: '⚠️ Preciso das permissões Conectar e Falar nesse canal.',
+                flags: 64,
+            });
+        }
+
         const audioFolder = path.join(__dirname, 'audios');
         if (!fs.existsSync(audioFolder)) {
             return interaction.reply({ content: '⚠️ A pasta de áudios não foi encontrada!', flags: 64 });
         }
 
         const supportedExtensions = ['.mp3', '.ogg', '.wav'];
-        const audioFiles = fs.readdirSync(audioFolder).filter((file) => supportedExtensions.includes(path.extname(file)));
+        const audioFiles = fs.readdirSync(audioFolder)
+            .filter((file) => supportedExtensions.includes(path.extname(file).toLowerCase()));
         const audioNames = [...new Set(audioFiles.map((file) => path.basename(file, path.extname(file))))];
 
         if (audioNames.length === 0) {
             return interaction.reply({ content: '⚠️ Nenhum áudio encontrado na pasta!', flags: 64 });
         }
 
-        // Cria o player com monitoramento do canal
-        const playerManager = new AudioPlayerManager(interaction.guild, voiceChannel, audioFolder, supportedExtensions, interaction.client);
+        let deleteListener;
+        let playerManager;
+        const cleanup = () => {
+            if (activePlayers.get(guildId) === playerManager) activePlayers.delete(guildId);
+            if (deleteListener) interaction.client.removeListener('messageDelete', deleteListener);
+        };
+
+        playerManager = new AudioPlayerManager(
+            interaction.guild,
+            voiceChannel,
+            audioFolder,
+            supportedExtensions,
+            interaction.client,
+            cleanup,
+        );
         activePlayers.set(guildId, playerManager);
 
         // Função para criar embed atualizado
@@ -87,10 +115,12 @@ module.exports = {
                 new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
                         .setCustomId('prev_page').setLabel('Página anterior').setStyle(ButtonStyle.Secondary)
-                        .setEmoji('◀️'),
+                        .setEmoji('◀️')
+                        .setDisabled(playerManager.currentPage <= 1),
                     new ButtonBuilder()
                         .setCustomId('next_page').setLabel('Próxima página').setStyle(ButtonStyle.Secondary)
-                        .setEmoji('▶️'),
+                        .setEmoji('▶️')
+                        .setDisabled(playerManager.currentPage >= totalPages),
                 ),
                 new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('resume_audio').setLabel('Play').setStyle(ButtonStyle.Success)
@@ -115,13 +145,19 @@ module.exports = {
             return rows;
         };
 
-        await interaction.deferReply();
-        await interaction.deleteReply();
+        await interaction.deferReply({ flags: 64 });
 
-        const sentMessage = await interaction.channel.send({
-            embeds: [createEmbed()],
-            components: createRows(),
-        });
+        let sentMessage;
+        try {
+            sentMessage = await interaction.channel.send({
+                embeds: [createEmbed()],
+                components: createRows(),
+            });
+        } catch (error) {
+            playerManager.destroy();
+            console.error('Erro ao criar painel de áudio:', error);
+            return interaction.editReply('❌ Não foi possível criar o painel de áudio neste canal.');
+        }
 
         playerManager.setSentMessage(sentMessage);
         playerManager.setUpdateMessageFunction(async () => {
@@ -133,16 +169,15 @@ module.exports = {
         });
 
         // Listener para deletar o menu manualmente
-        const deleteListener = async (message) => {
+        deleteListener = async (message) => {
             if (message.id === sentMessage.id) {
-                interaction.client.removeListener('messageDelete', deleteListener);
                 playerManager.destroy();
-                activePlayers.delete(guildId);
             }
         };
         interaction.client.on('messageDelete', deleteListener);
 
         // Inicia idleTimeout automaticamente
         playerManager.startIdleTimeout();
+        return interaction.editReply('✅ Painel de áudio criado neste canal.');
     },
 };

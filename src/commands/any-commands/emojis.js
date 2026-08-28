@@ -4,6 +4,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
 
 const OWNER_ID = '335012394226941966';
+const MAX_EMOJI_BYTES = 512 * 1024;
 
 function formatEmoji(emoji) {
     return `${emoji.animated ? `<a:${emoji.name}:${emoji.id}>` : `<:${emoji.name}:${emoji.id}>`} = \`${emoji.name}\` (\`${emoji.id}\`)`;
@@ -74,17 +75,29 @@ module.exports = {
                 const nome = interaction.options.getString('nome');
                 const arquivo = interaction.options.getAttachment('arquivo');
 
+                if (!/^[A-Za-z0-9_]{2,32}$/.test(nome)) {
+                    return interaction.editReply('❌ O nome deve ter de 2 a 32 caracteres: letras, números ou _.');
+                }
+
                 if (!arquivo.contentType?.startsWith('image/')) {
                     return interaction.editReply('❌ O arquivo precisa ser uma imagem (png, jpg, gif).');
                 }
 
+                if (arquivo.size > MAX_EMOJI_BYTES) {
+                    return interaction.editReply('❌ A imagem deve ter no máximo 512 KB.');
+                }
+
+                const imageResponse = await axios.get(arquivo.url, {
+                    responseType: 'arraybuffer',
+                    timeout: 15_000,
+                    maxContentLength: MAX_EMOJI_BYTES,
+                    maxBodyLength: MAX_EMOJI_BYTES,
+                });
                 const { data: emoji } = await axios.post(
                     `https://discord.com/api/v10/applications/${applicationId}/emojis`,
                     {
                         name: nome,
-                        image: `data:${arquivo.contentType};base64,${Buffer.from(
-                            await (await fetch(arquivo.url)).arrayBuffer(),
-                        ).toString('base64')}`,
+                        image: `data:${arquivo.contentType};base64,${Buffer.from(imageResponse.data).toString('base64')}`,
                     },
                     { headers: { Authorization: token, 'Content-Type': 'application/json' } },
                 );

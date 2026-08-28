@@ -1,5 +1,4 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { getProfile } = require('../../utils/profileManager');
 const Profile = require('../../models/profile');
 
 const DAILY_COOLDOWN = 24 * 60 * 60 * 1000; // 24 horas
@@ -16,14 +15,34 @@ module.exports = {
             const userId = interaction.user.id;
             const { username } = interaction.user;
 
-            let profile = await getProfile(userId);
-            if (!profile) {
-                profile = new Profile({ userId, username });
-            }
-
             const now = new Date();
-            if (profile.lastDaily && now - profile.lastDaily < DAILY_COOLDOWN) {
-                const remaining = DAILY_COOLDOWN - (now - profile.lastDaily);
+            const cooldownLimit = new Date(now.getTime() - DAILY_COOLDOWN);
+            const reward = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
+
+            await Profile.updateOne(
+                { userId },
+                { $set: { username }, $setOnInsert: { userId } },
+                { upsert: true, setDefaultsOnInsert: true },
+            );
+
+            const profile = await Profile.findOneAndUpdate(
+                {
+                    userId,
+                    $or: [
+                        { lastDaily: null },
+                        { lastDaily: { $lte: cooldownLimit } },
+                    ],
+                },
+                {
+                    $inc: { money: reward },
+                    $set: { lastDaily: now, username },
+                },
+                { new: true },
+            );
+
+            if (!profile) {
+                const existingProfile = await Profile.findOne({ userId });
+                const remaining = Math.max(0, DAILY_COOLDOWN - (now - existingProfile.lastDaily));
                 const hours = Math.floor(remaining / (1000 * 60 * 60));
                 const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
                 const seconds = Math.floor((remaining % (1000 * 60)) / 1000);
@@ -36,12 +55,6 @@ module.exports = {
 
                 return interaction.reply({ embeds: [embed], flags: 64 });
             }
-
-            // Gera recompensa aleatória
-            const reward = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
-            profile.money = (profile.money || 0) + reward;
-            profile.lastDaily = now;
-            await profile.save();
 
             // Mensagem customizada dependendo do valor
             let message = 'Você recebeu sua recompensa diária!';
@@ -57,7 +70,9 @@ module.exports = {
             return interaction.reply({ embeds: [embed] });
         } catch (error) {
             console.error('Erro no comando /daily:', error);
-            return interaction.reply({ content: '❌ Ocorreu um erro ao tentar coletar o daily.', flags: 64 });
+            const response = { content: '❌ Ocorreu um erro ao tentar coletar o daily.' };
+            if (interaction.replied || interaction.deferred) return interaction.followUp({ ...response, flags: 64 });
+            return interaction.reply({ ...response, flags: 64 });
         }
     },
 };

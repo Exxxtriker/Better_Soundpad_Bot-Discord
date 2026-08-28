@@ -1,4 +1,3 @@
-/* eslint-disable no-underscore-dangle */
 /* eslint-disable max-len */
 const {
     joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior,
@@ -7,12 +6,14 @@ const path = require('path');
 const fs = require('fs');
 
 class AudioPlayerManager {
-    constructor(guild, voiceChannel, audioFolder, supportedExtensions, client) {
+    constructor(guild, voiceChannel, audioFolder, supportedExtensions, client, onDestroy) {
         this.guild = guild;
         this.voiceChannel = voiceChannel;
         this.audioFolder = audioFolder;
         this.supportedExtensions = supportedExtensions;
         this.client = client; // Discord client para ouvir voiceStateUpdate
+        this.onDestroy = onDestroy;
+        this.destroyed = false;
 
         this.connection = joinVoiceChannel({
             channelId: voiceChannel.id,
@@ -41,7 +42,8 @@ class AudioPlayerManager {
         this.itemsPerPage = 25; // áudios por página
 
         // Lista de áudios
-        const files = fs.readdirSync(audioFolder).filter((f) => supportedExtensions.includes(path.extname(f)));
+        const files = fs.readdirSync(audioFolder)
+            .filter((file) => supportedExtensions.includes(path.extname(file).toLowerCase()));
         this.audioNames = [...new Set(files.map((f) => path.basename(f, path.extname(f))))];
 
         // Listener do player
@@ -60,21 +62,18 @@ class AudioPlayerManager {
 
         this.player.on('error', (error) => {
             console.error('Erro no player:', error);
+            this.currentResource = null;
+            this.currentAudioName = null;
             if (this.updateMessage) this.updateMessage();
+            this.startIdleTimeout();
         });
 
         // 🔹 Monitora o canal automaticamente
-        // eslint-disable-next-line no-unused-vars
-        this.voiceStateListener = (oldState, newState) => {
-            if (oldState.guild.id !== guild.id) return;
-
+        this.voiceStateListener = () => {
             const nonBotMembers = this.voiceChannel.members.filter((m) => !m.user.bot);
             if (nonBotMembers.size === 0) {
                 // Ninguém humano no canal
-                this.destroy();
-                if (this.sentMessage && !this.sentMessage.deleted) {
-                    this.sentMessage.delete().catch(() => {});
-                }
+                this.destroy({ deleteMessage: true });
             }
         };
 
@@ -93,10 +92,10 @@ class AudioPlayerManager {
     }
 
     reloadAudioList() {
-        const files = fs.readdirSync(this.audioFolder).filter((f) => this.supportedExtensions.includes(path.extname(f)));
+        const files = fs.readdirSync(this.audioFolder)
+            .filter((file) => this.supportedExtensions.includes(path.extname(file).toLowerCase()));
         this.audioNames = [...new Set(files.map((f) => path.basename(f, path.extname(f))))];
         this.currentPage = 1;
-        if (this.updateMessage) this.updateMessage();
     }
     // -------------------------------------------------------
 
@@ -109,6 +108,7 @@ class AudioPlayerManager {
     }
 
     playAudio(audioName) {
+        if (this.destroyed || !this.audioNames.includes(audioName)) return false;
         const audioPath = this.supportedExtensions
             .map((ext) => path.join(this.audioFolder, audioName + ext))
             .find((p) => fs.existsSync(p));
@@ -120,6 +120,7 @@ class AudioPlayerManager {
     }
 
     playResource(audioPath) {
+        if (this.destroyed) return;
         const resource = createAudioResource(audioPath, { metadata: { path: audioPath }, inlineVolume: true });
         resource.volume.setVolume(this.volume);
         this.currentResource = resource;
@@ -135,10 +136,10 @@ class AudioPlayerManager {
     }
 
     stop() {
-        this.player.stop();
+        this.player.stop(true);
         this.currentResource = null;
         this.currentAudioName = null;
-        this.startIdleTimeout();
+        if (!this.destroyed) this.startIdleTimeout();
     }
 
     setVolume(volume) {
@@ -153,11 +154,13 @@ class AudioPlayerManager {
         return this.loopEnabled;
     }
 
-    destroy() {
-        if (this._destroyed) return;
-        this._destroyed = true;
+    destroy({ deleteMessage = false } = {}) {
+        if (this.destroyed) return;
+        this.destroyed = true;
         this.clearIdleTimeout();
-        this.stop();
+        this.player.stop(true);
+        this.currentResource = null;
+        this.currentAudioName = null;
         if (this.connection && !this.connection.destroyed) {
             this.connection.destroy();
         }
@@ -165,16 +168,18 @@ class AudioPlayerManager {
             this.client.removeListener('voiceStateUpdate', this.voiceStateListener);
             this.voiceStateListener = null;
         }
+        if (deleteMessage && this.sentMessage && !this.sentMessage.deleted) {
+            this.sentMessage.delete().catch(() => {});
+        }
+        this.onDestroy?.();
+        this.onDestroy = null;
     }
 
     startIdleTimeout() {
-        if (this.idleTimeout) return;
+        if (this.idleTimeout || this.destroyed) return;
 
         this.idleTimeout = setTimeout(() => {
-            this.destroy();
-            if (this.sentMessage && !this.sentMessage.deleted) {
-                this.sentMessage.delete().catch(() => {});
-            }
+            this.destroy({ deleteMessage: true });
         }, this.idleTime);
     }
 

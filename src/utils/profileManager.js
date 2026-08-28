@@ -14,28 +14,39 @@ function calculateRank(level) {
 }
 
 async function addInteraction(userId, username) {
-    let profile = await Profile.findOne({ userId });
     const now = new Date();
+    const cooldownLimit = new Date(now.getTime() - INTERACTION_COOLDOWN);
 
-    if (!profile) profile = new Profile({ userId, username });
-    else profile.username = username;
+    await Profile.updateOne(
+        { userId },
+        { $set: { username }, $setOnInsert: { userId } },
+        { upsert: true, setDefaultsOnInsert: true },
+    );
 
-    if (profile.lastInteraction && now - profile.lastInteraction < INTERACTION_COOLDOWN) {
-        return profile;
-    }
+    const profile = await Profile.findOneAndUpdate(
+        {
+            userId,
+            $or: [
+                { lastInteraction: null },
+                { lastInteraction: { $lte: cooldownLimit } },
+            ],
+        },
+        {
+            $inc: { points: POINTS_PER_MESSAGE, xp: XP_PER_MESSAGE },
+            $set: { lastInteraction: now, username },
+        },
+        { new: true },
+    );
 
-    // Adiciona pontos e XP
-    profile.points += POINTS_PER_MESSAGE;
-    profile.xp += XP_PER_MESSAGE;
-    profile.lastInteraction = now;
+    if (!profile) return Profile.findOne({ userId });
 
-    // Atualiza nível se XP atingir o necessário
     const xpNeeded = profile.level * 100;
     if (profile.xp >= xpNeeded) {
         profile.level += 1;
         profile.xp -= xpNeeded;
-        profile.rank = calculateRank(profile.level);
     }
+
+    profile.rank = calculateRank(profile.level);
 
     await profile.save();
     return profile;
@@ -88,8 +99,6 @@ async function checkEmblems(profile) {
         ) {
             profile.emblems.push(rule.emblem);
             newEmblems.push(rule.emblem);
-            profile.rewards.push(rule.reward);
-            newRewards.push(rule.reward);
         }
     }
 
@@ -98,7 +107,7 @@ async function checkEmblems(profile) {
 }
 
 async function getProfile(userId) {
-    return await Profile.findOne({ userId });
+    return Profile.findOne({ userId });
 }
 
 module.exports = { addInteraction, checkEmblems, getProfile };
