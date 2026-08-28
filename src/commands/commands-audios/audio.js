@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const AudioPlayerManager = require('../../handlers/AudioPlayerHandler');
 const activePlayers = require('../../handlers/activePlayers');
+const { isMusicActive } = require('../music/play');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -21,6 +22,13 @@ module.exports = {
 
     async execute(interaction) {
         const guildId = interaction.guild.id;
+
+        if (isMusicActive(guildId)) {
+            return interaction.reply({
+                content: '⚠️ O player de música está ativo. Encerre-o antes de usar `/audio`.',
+                flags: 64,
+            });
+        }
 
         if (activePlayers.has(guildId)) {
             return interaction.reply({ content: '⚠️ Já existe um menu de áudio ativo neste servidor!', flags: 64 });
@@ -178,6 +186,9 @@ module.exports = {
 
         // Inicia idleTimeout automaticamente
         playerManager.startIdleTimeout();
-        return interaction.editReply('✅ Painel de áudio criado neste canal.');
+        await interaction.deleteReply().catch((error) => {
+            console.error('Não foi possível remover a confirmação do painel:', error);
+        });
+        return undefined;
     },
 };

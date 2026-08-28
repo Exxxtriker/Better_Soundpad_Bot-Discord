@@ -97,7 +97,6 @@ module.exports = async (interaction) => {
                 await distubeQueue.shuffle();
             }
             await updateMessage(guildId);
-            await interaction.followUp({ content: '🔀 Fila embaralhada!', flags: 64 });
             break;
 
         case 'music_queue': {

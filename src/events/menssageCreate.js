@@ -1,10 +1,27 @@
 const { Events } = require('discord.js');
 const { addInteraction, checkEmblems } = require('../utils/profileManager');
+const { isDiceExpression, rollExpression } = require('../commands/any-commands/rolls');
 
 module.exports = {
     name: Events.MessageCreate,
     async execute(message) {
         if (message.author.bot) return;
+
+        if (isDiceExpression(message.content)) {
+            try {
+                await message.reply({
+                    content: rollExpression(message.content),
+                    allowedMentions: { repliedUser: false },
+                    failIfNotExists: false,
+                });
+            } catch (error) {
+                await message.reply({
+                    content: `❌ ${error.message}`,
+                    allowedMentions: { repliedUser: false },
+                    failIfNotExists: false,
+                }).catch(() => {});
+            }
+        }
 
         try {
             const profile = await addInteraction(message.author.id, message.author.username);

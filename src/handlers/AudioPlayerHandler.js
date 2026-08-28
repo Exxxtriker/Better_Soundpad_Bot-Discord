@@ -4,6 +4,7 @@ const {
 } = require('@discordjs/voice');
 const path = require('path');
 const fs = require('fs');
+const { safelyDestroyVoiceConnection } = require('../utils/voiceConnection');
 
 class AudioPlayerManager {
     constructor(guild, voiceChannel, audioFolder, supportedExtensions, client, onDestroy) {
@@ -161,9 +162,7 @@ class AudioPlayerManager {
         this.player.stop(true);
         this.currentResource = null;
         this.currentAudioName = null;
-        if (this.connection && !this.connection.destroyed) {
-            this.connection.destroy();
-        }
+        safelyDestroyVoiceConnection(this.connection);
         if (this.client && this.voiceStateListener) {
             this.client.removeListener('voiceStateUpdate', this.voiceStateListener);
             this.voiceStateListener = null;

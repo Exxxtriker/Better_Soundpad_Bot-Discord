@@ -58,6 +58,30 @@ function rollTerm(rawTerm) {
     };
 }
 
+function isDiceExpression(rawInput) {
+    if (typeof rawInput !== 'string' || rawInput.length > 200) return false;
+    const compact = rawInput.trim().replace(/\s/g, '');
+    return /d/i.test(compact) && /^[\dd#+-]+$/i.test(compact);
+}
+
+function rollExpression(rawInput) {
+    const { repeat, terms } = parseExpression(rawInput);
+    const results = [];
+
+    for (let index = 0; index < repeat; index += 1) {
+        const rolledTerms = terms.map(rollTerm);
+        const total = rolledTerms.reduce((sum, result) => sum + result.total, 0);
+        results.push(`\` ${total} \` ⟵ ${rolledTerms.map((result) => result.display).join(' + ')}`);
+    }
+
+    const content = results.join('\n');
+    if (content.length > MAX_RESPONSE_LENGTH) {
+        throw new Error('O resultado ficou grande demais. Reduza a quantidade de dados.');
+    }
+
+    return content;
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('roll')
@@ -69,23 +93,11 @@ module.exports = {
 
     async execute(interaction) {
         try {
-            const { repeat, terms } = parseExpression(interaction.options.getString('expressao'));
-            const results = [];
-
-            for (let index = 0; index < repeat; index += 1) {
-                const rolledTerms = terms.map(rollTerm);
-                const total = rolledTerms.reduce((sum, result) => sum + result.total, 0);
-                results.push(`\` ${total} \` ⟵ ${rolledTerms.map((result) => result.display).join(' + ')}`);
-            }
-
-            const content = results.join('\n');
-            if (content.length > MAX_RESPONSE_LENGTH) {
-                throw new Error('O resultado ficou grande demais. Reduza a quantidade de dados.');
-            }
-
-            return interaction.reply(content);
+            return interaction.reply(rollExpression(interaction.options.getString('expressao')));
         } catch (error) {
             return interaction.reply({ content: `❌ ${error.message}`, flags: 64 });
         }
     },
+    isDiceExpression,
+    rollExpression,
 };

@@ -77,8 +77,10 @@ npm start
 ## Configuração
 - Crie um arquivo `.env` com `TOKEN`, `CLIENT_ID` e `MONGO_URI`.
 - `APPLICATION_ID` é opcional; o comando de emojis usa o ID da aplicação conectada como alternativa.
+- `SPOTIFY_CLIENT_ID` e `SPOTIFY_CLIENT_SECRET` habilitam a API oficial do Spotify e playlists com mais de 100 faixas.
 - `RADIO_OWNER_ID` pode definir quem usa `/radio`.
-- `CUSTOM_DNS=true` habilita os resolvedores DNS públicos configurados pelo projeto.
+- O bot usa DNS público automaticamente se o DNS do sistema recusar a consulta SRV do MongoDB.
+- `CUSTOM_DNS=true` força DNS público desde o início; `CUSTOM_DNS=false` desabilita o fallback.
 - `/uploadaudio` e `/ytmp3` exigem a permissão **Gerenciar Servidor** e limitam arquivos a 25 MB.
 
 ## Desenvolvimento
