@@ -25,5 +25,3 @@ for (const directoryEntry of fs.readdirSync(commandsRoot, { withFileTypes: true 
         }
     }
 }
-
-console.log(`✅ ${commandNames.size} comandos validados.`);

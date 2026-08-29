@@ -3,3 +3,4 @@ node_modules
 src/commands/commands-audios/audios/*
 !src/commands/commands-audios/audios/.gitkeep
 cookies.txt
+logs/*.txt

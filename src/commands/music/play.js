@@ -19,13 +19,18 @@ const { safelyDestroyVoiceConnection } = require('../../utils/voiceConnection');
 const YT_DLP_PATH = path.join(__dirname, '../commands-audios/yt-dlp.exe');
 const COOKIES_PATH = path.join(__dirname, '../commands-audios/cookies.txt');
 const STREAM_URL_MAX_AGE = 4 * 60 * 60 * 1000;
+const DEFAULT_MUSIC_VOLUME = 100;
+const MAX_SPOTIFY_QUEUE_SIZE = 1_000;
 
 // ─── Fila por guild ───────────────────────────────────────────────
 const guildQueues = new Map(); // guildId -> { songs[], player, connection, playing }
 const playerMessages = new Map(); // guildId -> Message
+const playerMessageDeleteListeners = new Map(); // guildId -> { client, listener }
 const pendingPlayRequests = new Map(); // guildId -> quantidade de /play em processamento
 const retriedDistubeSongs = new WeakSet();
 let distube = null;
+let spotifyPlugin = null;
+let spotifyPublicPlugin = null;
 
 function beginPlayRequest(guildId) {
     pendingPlayRequests.set(guildId, (pendingPlayRequests.get(guildId) ?? 0) + 1);
@@ -35,6 +40,30 @@ function endPlayRequest(guildId) {
     const remaining = (pendingPlayRequests.get(guildId) ?? 1) - 1;
     if (remaining > 0) pendingPlayRequests.set(guildId, remaining);
     else pendingPlayRequests.delete(guildId);
+}
+
+function clearPlayerMessage(guildId, expectedMessageId) {
+    const currentMessage = playerMessages.get(guildId);
+    if (expectedMessageId && currentMessage?.id !== expectedMessageId) return false;
+
+    playerMessages.delete(guildId);
+    const registration = playerMessageDeleteListeners.get(guildId);
+    if (registration) {
+        registration.client.removeListener('messageDelete', registration.listener);
+        playerMessageDeleteListeners.delete(guildId);
+    }
+    return Boolean(currentMessage || registration);
+}
+
+function registerPlayerMessage(guildId, message, client) {
+    clearPlayerMessage(guildId);
+    playerMessages.set(guildId, message);
+
+    const listener = (deletedMessage) => {
+        if (deletedMessage.id === message.id) clearPlayerMessage(guildId, message.id);
+    };
+    playerMessageDeleteListeners.set(guildId, { client, listener });
+    client.on('messageDelete', listener);
 }
 
 function formatDuration(seconds) {
@@ -91,6 +120,11 @@ function stopProcesses(queue) {
     queue?.currentProcesses?.ytdlp?.kill();
     queue?.currentProcesses?.ffmpeg?.kill();
     if (queue) queue.currentProcesses = null;
+}
+
+function handleAudioPlayerError(error) {
+    if (/write after end/i.test(error?.message ?? '')) return;
+    console.error(`Erro no player de áudio: ${error?.message ?? error}`);
 }
 
 async function dismissReply(interaction) {
@@ -167,7 +201,6 @@ function createYtStream(song) {
             this.cancelled = true;
             this.ytdlp?.kill();
             this.ffmpeg?.kill();
-            if (!output.destroyed) output.end();
         },
     };
     let directBytes = 0;
@@ -178,7 +211,6 @@ function createYtStream(song) {
     const startFallback = () => {
         if (fallbackStarted || processes.cancelled) return;
         fallbackStarted = true;
-        console.warn('⚠️ Conexão direta com o YouTube falhou; tentando modo compatível.');
 
         const ytdlp = spawn(YT_DLP_PATH, [
             '--cookies', COOKIES_PATH,
@@ -189,7 +221,7 @@ function createYtStream(song) {
             '--no-warnings',
             '--quiet',
             '-o', '-',
-            song.url,
+            song.streamQuery ?? song.url,
         ]);
         const fallbackFfmpeg = spawn(ffmpegPath, [
             '-nostdin',
@@ -214,15 +246,21 @@ function createYtStream(song) {
         ytdlp.on('error', (error) => console.error('Falha ao iniciar yt-dlp:', error));
         fallbackFfmpeg.on('error', (error) => {
             console.error('Falha ao iniciar FFmpeg:', error);
-            if (!output.destroyed) output.end();
+            fallbackFfmpeg.stdout.unpipe(output);
+            if (!output.destroyed && !output.writableEnded) output.end();
         });
         ytdlp.on('close', () => {
             if (!fallbackFfmpeg.stdin.destroyed) fallbackFfmpeg.stdin.end();
         });
         fallbackFfmpeg.on('close', () => {
-            if (!output.destroyed) output.end();
+            if (!output.destroyed && !output.writableEnded) output.end();
         });
     };
+
+    if (song.forceCompatibleStream) {
+        startFallback();
+        return { stream: output, processes };
+    }
 
     const ffmpeg = spawn(ffmpegPath, [
         '-nostdin',
@@ -246,7 +284,7 @@ function createYtStream(song) {
     ffmpeg.stdout.on('error', () => {});
     ffmpeg.stdout.on('data', (chunk) => {
         directBytes += chunk.length;
-        if (!output.destroyed) output.write(chunk);
+        if (!output.destroyed && !output.writableEnded) output.write(chunk);
     });
     ffmpeg.stderr.on('data', (data) => {
         directError = `${directError}${data}`.slice(-4_000);
@@ -260,7 +298,7 @@ function createYtStream(song) {
         directFinished = true;
         if (!processes.cancelled && code !== 0 && directBytes === 0) {
             startFallback();
-        } else if (!output.destroyed) {
+        } else if (!output.destroyed && !output.writableEnded) {
             if (code !== 0 && directError) console.error('[ffmpeg-direto]', directError);
             output.end();
         }
@@ -379,6 +417,10 @@ async function updateMessage(guildId) {
     try {
         await msg.edit({ embeds: [createEmbed(guildId)], components: createRows(guildId) });
     } catch (err) {
+        if (err.code === 10008) {
+            clearPlayerMessage(guildId, msg.id);
+            return;
+        }
         console.error('Erro ao atualizar embed:', err);
     }
 }
@@ -399,7 +441,15 @@ async function playNext(guildId, textChannel) {
 
     if (!song.streamUrl || Date.now() - song.resolvedAt > STREAM_URL_MAX_AGE) {
         const requester = song.user;
-        Object.assign(song, await getSongInfo(song.url));
+        const streamInfo = await getSongInfo(song.streamQuery ?? song.url);
+        if (song.preserveMetadata) {
+            song.streamUrl = streamInfo.streamUrl;
+            song.httpHeaders = streamInfo.httpHeaders;
+            song.resolvedAt = streamInfo.resolvedAt;
+            song.streamQuery = streamInfo.url;
+        } else {
+            Object.assign(song, streamInfo);
+        }
         song.user = requester;
     }
 
@@ -420,9 +470,8 @@ async function playNext(guildId, textChannel) {
         .catch((error) => console.error('Erro ao anunciar música:', error));
 }
 
-// ─── DisTube para Spotify/SoundCloud ─────────────────────────────
-function getDistube(client) {
-    if (!distube) {
+function getSpotifyPlugin() {
+    if (!spotifyPlugin) {
         const spotifyClientId = process.env.SPOTIFY_CLIENT_ID;
         const spotifyClientSecret = process.env.SPOTIFY_CLIENT_SECRET;
         const spotifyOptions = spotifyClientId && spotifyClientSecret
@@ -435,12 +484,60 @@ function getDistube(client) {
             }
             : {};
 
-        if (!spotifyClientId || !spotifyClientSecret) {
-            console.warn('⚠️ Credenciais do Spotify ausentes; playlists poderão ficar limitadas a 100 faixas.');
-        }
+        spotifyPlugin = new SpotifyPlugin(spotifyOptions);
+    }
+    return spotifyPlugin;
+}
 
+function getSpotifyPublicPlugin() {
+    if (!spotifyPublicPlugin) spotifyPublicPlugin = new SpotifyPlugin();
+    return spotifyPublicPlugin;
+}
+
+async function resolveSpotify(query, options, primaryPlugin = getSpotifyPlugin(), publicPluginFactory = getSpotifyPublicPlugin) {
+    try {
+        return await primaryPlugin.resolve(query, options);
+    } catch (error) {
+        const isUnavailableEditorialPlaylist = error.errorCode === 'SPOTIFY_API_ERROR'
+            && /Resource not found|Status code:\s*404/i.test(error.message);
+        if (!isUnavailableEditorialPlaylist) throw error;
+
+        return publicPluginFactory().resolve(query, options);
+    }
+}
+
+function createSpotifyQueueSongs(resolved, user) {
+    const tracks = Array.isArray(resolved.songs) ? resolved.songs : [resolved];
+    if (tracks.length > MAX_SPOTIFY_QUEUE_SIZE) {
+        throw new Error(`A playlist possui mais de ${MAX_SPOTIFY_QUEUE_SIZE} faixas.`);
+    }
+
+    return tracks.map((track) => {
+        const title = track.name ?? track.title ?? 'Faixa desconhecida';
+        const uploader = track.uploader?.name ?? track.uploader ?? 'Artista desconhecido';
+        return {
+            title,
+            duration: track.duration ?? 0,
+            formattedDuration: track.formattedDuration ?? formatDuration(track.duration ?? 0),
+            thumbnail: track.thumbnail ?? null,
+            url: track.url,
+            uploader,
+            user,
+            streamQuery: `${title} ${uploader} official audio`.slice(0, 200),
+            streamUrl: null,
+            httpHeaders: {},
+            resolvedAt: 0,
+            preserveMetadata: true,
+            forceCompatibleStream: true,
+        };
+    });
+}
+
+// ─── DisTube apenas para SoundCloud ──────────────────────────────
+function getDistube(client) {
+    if (!distube) {
         distube = new DisTube(client, {
-            plugins: [new SpotifyPlugin(spotifyOptions), new SoundCloudPlugin()],
+            plugins: [new SoundCloudPlugin()],
             ffmpeg: {
                 path: ffmpegPath,
                 args: {
@@ -453,13 +550,18 @@ function getDistube(client) {
                 },
             },
         });
+        distube.on('initQueue', (queue) => queue.setVolume(DEFAULT_MUSIC_VOLUME));
         distube.on('playSong', (queue) => updateMessage(queue.id));
         distube.on('addSong', (queue) => updateMessage(queue.id));
         distube.on('finishSong', (queue) => updateMessage(queue.id));
         distube.on('deleteQueue', (queue) => updateMessage(queue.id));
         distube.on('disconnect', (queue) => updateMessage(queue.id));
         distube.on('ffmpegDebug', (message) => {
-            if (!/(error|invalid|failed|forbidden|timed? out|reset)/i.test(message)) return;
+            if (/Premature close|-10054|Will reconnect|Error in the pull function/i.test(message)) return;
+            const isProcessError = /\[(?:process|stream)\] error:/i.test(message);
+            const isFfmpegError = /\[ffmpeg\] log:.*(?:error|invalid|failed|forbidden|timed? out|reset)/i
+                .test(message);
+            if (!isProcessError && !isFfmpegError) return;
             const safeMessage = message.replace(/https?:\/\/\S+/gi, '[URL removida]');
             console.error('[DisTube/FFmpeg]', safeMessage);
         });
@@ -469,7 +571,6 @@ function getDistube(client) {
                 const playableSong = song.stream?.playFromSource ? song : song.stream?.song;
                 if (playableSong?.stream) delete playableSong.stream.url;
                 queue.songs.unshift(song);
-                console.warn('⚠️ URL de áudio expirou ou falhou; renovando e tentando novamente.');
                 return;
             }
 
@@ -541,13 +642,14 @@ async function ensureQueue(guild, voiceChannel, textChannel) {
     await entersState(connection, VoiceConnectionStatus.Ready, 10_000);
 
     const player = createAudioPlayer();
+    player.on('error', handleAudioPlayerError);
     connection.subscribe(player);
 
     const queue = {
         songs: [],
         player,
         connection,
-        volume: 100,
+        volume: DEFAULT_MUSIC_VOLUME,
         loop: 'off',
         paused: false,
         history: [],
@@ -657,19 +759,31 @@ module.exports = {
                     embeds: [createEmbed(interaction.guild.id)],
                     components: createRows(interaction.guild.id),
                 });
-                playerMessages.set(interaction.guild.id, sentMessage);
-                const deleteListener = (message) => {
-                    if (message.id === sentMessage.id) {
-                        playerMessages.delete(interaction.guild.id);
-                        interaction.client.removeListener('messageDelete', deleteListener);
-                    }
-                };
-                interaction.client.on('messageDelete', deleteListener);
+                registerPlayerMessage(interaction.guild.id, sentMessage, interaction.client);
             }
 
-            if (isSpotify || isSoundCloud) {
+            if (isSpotify) {
+                if (getDistubeQueue(interaction.guild.id)) {
+                    return interaction.editReply('❌ Finalize a fila do SoundCloud antes de usar Spotify.');
+                }
+
+                const resolved = await resolveSpotify(query, { member: interaction.member });
+                const spotifySongs = createSpotifyQueueSongs(resolved, interaction.user);
+                const queue = await ensureQueue(interaction.guild, voiceChannel, interaction.channel);
+                queue.songs.push(...spotifySongs);
+
+                if (queue.player.state.status === AudioPlayerStatus.Idle) {
+                    await playNext(interaction.guild.id, interaction.channel);
+                } else {
+                    await updateMessage(interaction.guild.id);
+                }
+                await dismissReply(interaction);
+                return;
+            }
+
+            if (isSoundCloud) {
                 if (guildQueues.has(interaction.guild.id)) {
-                    return interaction.editReply('❌ Finalize a fila atual antes de trocar para Spotify/SoundCloud.');
+                    return interaction.editReply('❌ Finalize a fila atual antes de trocar para SoundCloud.');
                 }
                 const dt = getDistube(interaction.client);
                 await dt.play(voiceChannel, query, { textChannel: interaction.channel, member: interaction.member });
@@ -711,6 +825,8 @@ module.exports = {
     // Exporta para o interaction handler
     guildQueues,
     playerMessages,
+    clearPlayerMessage,
+    registerPlayerMessage,
     createEmbed,
     createRows,
     updateMessage,
@@ -723,4 +839,7 @@ module.exports = {
     validateQuery,
     getSelectedStreamData,
     buildFfmpegHeaders,
+    handleAudioPlayerError,
+    createSpotifyQueueSongs,
+    resolveSpotify,
 };

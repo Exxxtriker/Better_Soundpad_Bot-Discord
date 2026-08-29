@@ -1,8 +1,8 @@
 const {
     advanceCustomQueue,
+    clearPlayerMessage,
     getDistubeQueue,
     guildQueues,
-    playerMessages,
     stopCustomQueue,
     updateMessage,
 } = require('../commands/music/play');
@@ -74,7 +74,7 @@ module.exports = async (interaction) => {
         case 'music_stop':
             if (customQueue) await stopCustomQueue(guildId);
             else await distubeQueue.stop();
-            playerMessages.delete(guildId);
+            clearPlayerMessage(guildId, interaction.message.id);
             await interaction.message.delete().catch(() => {});
             break;
 
