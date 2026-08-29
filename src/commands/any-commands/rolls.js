@@ -1,6 +1,7 @@
 /* eslint-disable prefer-destructuring */
 /* eslint-disable no-plusplus */
 /* eslint-disable max-len */
+const { randomInt } = require('node:crypto');
 const { SlashCommandBuilder } = require('discord.js');
 
 const MAX_REPETITIONS = 20;
@@ -29,7 +30,11 @@ function parseExpression(rawInput) {
     return { repeat, terms };
 }
 
-function rollTerm(rawTerm) {
+function rollDie(sides, randomInteger = randomInt) {
+    return randomInteger(1, sides + 1);
+}
+
+function rollTerm(rawTerm, randomInteger = randomInt) {
     const negative = rawTerm.startsWith('-');
     const term = rawTerm.replace(/^[+-]/, '');
     const diceMatch = term.match(/^(\d*)d(\d+)$/i);
@@ -49,7 +54,7 @@ function rollTerm(rawTerm) {
         throw new Error(`Cada dado deve ter entre 2 e ${MAX_DIE_SIDES} lados.`);
     }
 
-    const rolls = Array.from({ length: diceCount }, () => Math.floor(Math.random() * sides) + 1);
+    const rolls = Array.from({ length: diceCount }, () => rollDie(sides, randomInteger));
     const subtotal = rolls.reduce((sum, value) => sum + value, 0);
     const sign = negative ? '-' : '';
     return {
@@ -64,12 +69,12 @@ function isDiceExpression(rawInput) {
     return /d/i.test(compact) && /^[\dd#+-]+$/i.test(compact);
 }
 
-function rollExpression(rawInput) {
+function rollExpression(rawInput, randomInteger = randomInt) {
     const { repeat, terms } = parseExpression(rawInput);
     const results = [];
 
     for (let index = 0; index < repeat; index += 1) {
-        const rolledTerms = terms.map(rollTerm);
+        const rolledTerms = terms.map((term) => rollTerm(term, randomInteger));
         const total = rolledTerms.reduce((sum, result) => sum + result.total, 0);
         results.push(`\` ${total} \` ⟵ ${rolledTerms.map((result) => result.display).join(' + ')}`);
     }
@@ -99,5 +104,6 @@ module.exports = {
         }
     },
     isDiceExpression,
+    rollDie,
     rollExpression,
 };
