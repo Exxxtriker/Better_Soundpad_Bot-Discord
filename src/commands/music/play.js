@@ -207,7 +207,7 @@ function getSongInfo(query) {
         const input = /^https:\/\//i.test(query) ? query : `ytsearch1:${query}`;
         execFile(YT_DLP_PATH, [
             '--cookies', COOKIES_PATH,
-            '--user-agent', 'Mozilla/5.0',
+            '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio/best',
             '--dump-json',
             '--no-warnings',
@@ -279,7 +279,7 @@ function prefetchNextSong(queue, resolver = getSongInfo) {
 }
 
 // ─── Stream direto da URL resolvida pelo yt-dlp ──────────────────
-function createYtStream(song) {
+function createYtStream(song, spawnProcess = spawn) {
     const headers = buildFfmpegHeaders(song.httpHeaders);
     const inputOptions = headers ? ['-headers', headers] : [];
     const output = new PassThrough();
@@ -287,6 +287,7 @@ function createYtStream(song) {
         ytdlp: null,
         ffmpeg: null,
         cancelled: false,
+        failed: false,
         cancel() {
             this.cancelled = true;
             this.ytdlp?.kill();
@@ -302,9 +303,9 @@ function createYtStream(song) {
         if (fallbackStarted || processes.cancelled) return;
         fallbackStarted = true;
 
-        const ytdlp = spawn(YT_DLP_PATH, [
+        const ytdlp = spawnProcess(YT_DLP_PATH, [
             '--cookies', COOKIES_PATH,
-            '--user-agent', 'Mozilla/5.0',
+            '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio/best',
             '--no-playlist',
             '--no-warnings',
@@ -312,41 +313,64 @@ function createYtStream(song) {
             '-o', '-',
             song.streamQuery ?? song.url,
         ]);
-        const fallbackFfmpeg = spawn(ffmpegPath, [
-            '-nostdin',
-            '-loglevel', 'error',
-            '-i', 'pipe:0',
-            '-vn',
-            '-f', 's16le',
-            '-ar', '48000',
-            '-ac', '2',
-            'pipe:1',
-        ]);
-
+        let fallbackFfmpeg = null;
+        let downloadError = '';
+        let decoderError = '';
         processes.ytdlp = ytdlp;
-        processes.ffmpeg = fallbackFfmpeg;
-        ytdlp.stdout.on('error', () => {});
-        fallbackFfmpeg.stdin.on('error', () => {});
-        fallbackFfmpeg.stdout.on('error', () => {});
-        ytdlp.stdout.pipe(fallbackFfmpeg.stdin);
-        fallbackFfmpeg.stdout.pipe(output, { end: false });
+
+        const fail = (error) => {
+            if (processes.cancelled || processes.failed) return;
+            processes.failed = true;
+            console.error('[YouTube]', error.message);
+            processes.cancel();
+            if (!output.destroyed && !output.writableEnded) output.end();
+        };
+
+        // Não abra o decodificador se o download falhou antes de entregar áudio.
+        ytdlp.stdout.once('readable', () => {
+            if (!ytdlp.stdout.readableLength || processes.cancelled) return;
+            fallbackFfmpeg = spawnProcess(ffmpegPath, [
+                '-nostdin',
+                '-loglevel', 'error',
+                '-i', 'pipe:0',
+                '-vn',
+                '-f', 's16le',
+                '-ar', '48000',
+                '-ac', '2',
+                'pipe:1',
+            ]);
+            processes.ffmpeg = fallbackFfmpeg;
+            fallbackFfmpeg.stdin.on('error', () => {});
+            fallbackFfmpeg.stdout.on('error', fail);
+            fallbackFfmpeg.stderr.on('data', (data) => {
+                decoderError = `${decoderError}${data}`.slice(-4_000);
+            });
+            fallbackFfmpeg.on('error', fail);
+            fallbackFfmpeg.on('close', (code) => {
+                if (processes.cancelled) return;
+                if (code !== 0) {
+                    fail(downloadError.includes('ERROR:')
+                        ? createYtDlpError(null, downloadError)
+                        : new Error(decoderError.trim() || 'O FFmpeg não conseguiu decodificar o áudio.'));
+                    return;
+                }
+                if (!output.destroyed && !output.writableEnded) output.end();
+            });
+            fallbackFfmpeg.stdout.pipe(output, { end: false });
+            ytdlp.stdout.pipe(fallbackFfmpeg.stdin);
+        });
+        ytdlp.stdout.on('error', fail);
         ytdlp.stderr.on('data', (data) => {
-            const message = data.toString();
-            if (processes.cancelled && /Interrupted by user/i.test(message)) return;
-            console.error('[yt-dlp]', message);
+            downloadError = `${downloadError}${data}`.slice(-4_000);
         });
-        fallbackFfmpeg.stderr.on('data', (data) => console.error('[ffmpeg]', data.toString()));
-        ytdlp.on('error', (error) => console.error('Falha ao iniciar yt-dlp:', error));
-        fallbackFfmpeg.on('error', (error) => {
-            console.error('Falha ao iniciar FFmpeg:', error);
-            fallbackFfmpeg.stdout.unpipe(output);
-            if (!output.destroyed && !output.writableEnded) output.end();
-        });
-        ytdlp.on('close', () => {
-            if (!fallbackFfmpeg.stdin.destroyed) fallbackFfmpeg.stdin.end();
-        });
-        fallbackFfmpeg.on('close', () => {
-            if (!output.destroyed && !output.writableEnded) output.end();
+        ytdlp.on('error', fail);
+        ytdlp.on('close', (code) => {
+            if (processes.cancelled) return;
+            if (code !== 0) {
+                fail(createYtDlpError(null, downloadError));
+            } else if (!fallbackFfmpeg) {
+                fail(new Error('O yt-dlp terminou sem entregar dados de áudio.'));
+            }
         });
     };
 
@@ -355,13 +379,13 @@ function createYtStream(song) {
         return { stream: output, processes };
     }
 
-    const ffmpeg = spawn(ffmpegPath, [
+    const ffmpeg = spawnProcess(ffmpegPath, [
         '-nostdin',
         '-loglevel', 'error',
         '-reconnect', '1',
         '-reconnect_streamed', '1',
         '-reconnect_on_network_error', '1',
-        '-reconnect_on_http_error', '4xx,5xx',
+        '-reconnect_on_http_error', '429,5xx',
         '-reconnect_delay_max', '5',
         '-rw_timeout', '15000000',
         ...inputOptions,
@@ -392,7 +416,10 @@ function createYtStream(song) {
         if (!processes.cancelled && code !== 0 && directBytes === 0) {
             startFallback();
         } else if (!output.destroyed && !output.writableEnded) {
-            if (code !== 0 && directError) console.error('[ffmpeg-direto]', directError);
+            if (!processes.cancelled && code !== 0) {
+                processes.failed = true;
+                console.error('[ffmpeg-direto]', directError || 'A transmissão de áudio foi interrompida.');
+            }
             output.end();
         }
     });
@@ -762,10 +789,11 @@ async function ensureQueue(guild, voiceChannel) {
 
             q.transitioning = true;
             try {
+                const playbackFailed = q.currentProcesses?.failed;
                 stopProcesses(q);
-                if (q.loop === 'queue' && q.songs.length > 0) {
+                if (!playbackFailed && q.loop === 'queue' && q.songs.length > 0) {
                     q.songs.push(q.songs.shift());
-                } else if (q.loop !== 'song') {
+                } else if (playbackFailed || q.loop !== 'song') {
                     const finished = q.songs.shift();
                     if (finished) q.history.push(finished);
                 }
@@ -943,6 +971,7 @@ module.exports = {
     getSelectedStreamData,
     buildFfmpegHeaders,
     createYtDlpError,
+    createYtStream,
     handleAudioPlayerError,
     createVoiceChannelStatus,
     setVoiceChannelStatus,

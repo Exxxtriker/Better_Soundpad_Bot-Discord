@@ -2,26 +2,59 @@ const { ActivityType, Events } = require('discord.js');
 
 const activityIntervals = new WeakMap();
 const STARTUP_BANNER = [
-    '  GGGG  III  DDDD   EEEEE   OOO   N   N',
-    ' G       I   D   D  E      O   O  NN  N',
-    ' G  GG   I   D   D  EEEE   O   O  N N N',
-    ' G   G   I   D   D  E      O   O  N  NN',
-    '  GGGG  III  DDDD   EEEEE   OOO   N   N',
-    '',
-    ' TTTTT  H   H  EEEEE      BBBB    AAA   RRRR   DDDD',
-    '   T    H   H  E          B   B  A   A  R   R  D   D',
-    '   T    HHHHH  EEEE       BBBB   AAAAA  RRRR   D   D',
-    '   T    H   H  E          B   B  A   A  R  R   D   D',
-    '   T    H   H  EEEEE      BBBB   A   A  R   R  DDDD',
+    '┏┓• ┓        ┏┳┓┓     ┓      ┓',
+    '┃┓┓┏┫┏┓┏┓┏┓   ┃ ┣┓┏┓  ┣┓┏┓┏┓┏┫',
+    '┗┛┗┗┻┗ ┗┛┛┗   ┻ ┛┗┗   ┗┛┗┻┛ ┗┻',
 ].join('\n');
 
-function createStartupBanner(latency, serverCount) {
-    const roundedLatency = Math.max(0, Math.round(latency));
+function createStartupBanner(latency, serverCount, options = {}) {
+    const {
+        color = Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb',
+        columns = process.stdout.columns ?? 80,
+    } = options;
+    const latencyText = Number.isFinite(latency) && latency >= 0 ? `${Math.round(latency)} ms` : 'Aguardando';
+    const serversText = Number.isInteger(serverCount) && serverCount >= 0 ? String(serverCount) : 'Indisponível';
+    const paint = (text, code) => (color ? `\x1b[${code}m${text}\x1b[0m` : text);
+    const stats = [
+        ['STATUS', 'ONLINE', '32'],
+        ['LATÊNCIA', latencyText, '36'],
+        ['SERVIDORES', serversText, '37'],
+    ];
+
+    // Sem comandos de cursor: não apaga erros e continua legível em arquivos de log.
+    if (columns < 40) {
+        return [
+            '', paint(STARTUP_BANNER, '1;33'), '',
+            ...stats.map(([label, value, shade]) => paint(`${label}: ${value}`, shade)),
+            'Erros: logs/logs.txt', '',
+        ].join('\n');
+    }
+
+    const width = Math.min(56, columns - 2);
+    const border = (left, right) => paint(`${left}${'─'.repeat(width)}${right}`, '90');
+    const row = (text = '', shade = '37', centered = false) => {
+        const content = text.slice(0, width - 4);
+        const left = centered ? Math.floor((width - content.length) / 2) : 2;
+        const padded = `${' '.repeat(left)}${content}`.padEnd(width);
+        return `${paint('│', '90')}${paint(padded, shade)}${paint('│', '90')}`;
+    };
+
     return [
-        STARTUP_BANNER,
         '',
-        ` LATENCIA   : ${roundedLatency} ms`,
-        ` SERVIDORES : ${serverCount}`,
+        border('╭', '╮'),
+        row(),
+        ...STARTUP_BANNER.split('\n').map((line) => row(line, '1;33', true)),
+        row(),
+        row('RPG  /  MÚSICA  /  AVENTURAS', '90', true),
+        row(),
+        border('├', '┤'),
+        row(),
+        ...stats.map(([label, value, shade]) => row(`${label.padEnd(13)}${value}`, shade)),
+        row(),
+        border('├', '┤'),
+        row('ERROS        logs/logs.txt', '90'),
+        row('Ctrl+C para encerrar', '90'),
+        border('╰', '╯'),
         '',
     ].join('\n');
 }
