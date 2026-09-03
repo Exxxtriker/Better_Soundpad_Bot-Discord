@@ -140,6 +140,7 @@ function createVoiceChannelStatus(song) {
 
 async function setVoiceChannelStatus(voiceChannel, status) {
     if (!voiceChannel?.client?.rest || !voiceChannel.id) return false;
+    if (typeof voiceChannel.client.isReady === 'function' && !voiceChannel.client.isReady()) return false;
 
     try {
         await voiceChannel.client.rest.put(`/channels/${voiceChannel.id}/voice-status`, {
@@ -176,13 +177,36 @@ function buildFfmpegHeaders(headers = {}) {
         .join('');
 }
 
+function createYtDlpError(error, stderr = '') {
+    const details = [stderr, error?.stderr, error?.message]
+        .filter(Boolean)
+        .join('\n');
+
+    if (/sign in to confirm your age/i.test(details)) {
+        const authError = new Error(
+            'O YouTube exige uma conta autenticada e apta a confirmar a idade para este vídeo.',
+        );
+        authError.code = 'YOUTUBE_AGE_AUTH_REQUIRED';
+        return authError;
+    }
+
+    const errorLine = details
+        .split(/\r?\n/)
+        .find((line) => /^ERROR:/i.test(line.trim()));
+    const ytDlpError = new Error(
+        errorLine?.trim().replace(/^ERROR:\s*/i, '')
+        ?? 'O yt-dlp não conseguiu carregar o áudio.',
+    );
+    ytDlpError.code = error?.code ?? 'YT_DLP_ERROR';
+    return ytDlpError;
+}
+
 // ─── Pega info da música via yt-dlp ──────────────────────────────
 function getSongInfo(query) {
     return new Promise((resolve, reject) => {
         const input = /^https:\/\//i.test(query) ? query : `ytsearch1:${query}`;
         execFile(YT_DLP_PATH, [
             '--cookies', COOKIES_PATH,
-            '--extractor-args', 'youtube:player_client=android',
             '--user-agent', 'Mozilla/5.0',
             '-f', 'bestaudio/best',
             '--dump-json',
@@ -190,8 +214,8 @@ function getSongInfo(query) {
             '--quiet',
             '--no-playlist',
             input,
-        ], { timeout: 60_000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout) => {
-            if (error) return reject(new Error(error.message));
+        ], { timeout: 60_000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
+            if (error) return reject(createYtDlpError(error, stderr));
             try {
                 const info = JSON.parse(stdout.trim().split('\n')[0]);
                 const streamData = getSelectedStreamData(info);
@@ -211,6 +235,47 @@ function getSongInfo(query) {
             }
         });
     });
+}
+
+function isSongStreamFresh(song, now = Date.now()) {
+    return Boolean(
+        song?.streamUrl
+        && Number.isFinite(song.resolvedAt)
+        && now - song.resolvedAt < STREAM_URL_MAX_AGE,
+    );
+}
+
+async function resolveSongStream(song, resolver = getSongInfo) {
+    if (isSongStreamFresh(song)) return song;
+    if (song.streamResolution) return song.streamResolution;
+
+    const resolution = (async () => {
+        const requester = song.user;
+        const streamInfo = await resolver(song.streamQuery ?? song.url);
+        if (song.preserveMetadata) {
+            song.streamUrl = streamInfo.streamUrl;
+            song.httpHeaders = streamInfo.httpHeaders;
+            song.resolvedAt = streamInfo.resolvedAt;
+            song.streamQuery = streamInfo.url;
+        } else {
+            Object.assign(song, streamInfo);
+        }
+        song.user = requester;
+        return song;
+    })();
+
+    song.streamResolution = resolution;
+    try {
+        return await resolution;
+    } finally {
+        if (song.streamResolution === resolution) delete song.streamResolution;
+    }
+}
+
+function prefetchNextSong(queue, resolver = getSongInfo) {
+    const nextSong = queue?.songs?.[1];
+    if (!nextSong || isSongStreamFresh(nextSong)) return null;
+    return resolveSongStream(nextSong, resolver).catch(() => null);
 }
 
 // ─── Stream direto da URL resolvida pelo yt-dlp ──────────────────
@@ -239,7 +304,6 @@ function createYtStream(song) {
 
         const ytdlp = spawn(YT_DLP_PATH, [
             '--cookies', COOKIES_PATH,
-            '--extractor-args', 'youtube:player_client=android',
             '--user-agent', 'Mozilla/5.0',
             '-f', 'bestaudio/best',
             '--no-playlist',
@@ -266,7 +330,11 @@ function createYtStream(song) {
         fallbackFfmpeg.stdout.on('error', () => {});
         ytdlp.stdout.pipe(fallbackFfmpeg.stdin);
         fallbackFfmpeg.stdout.pipe(output, { end: false });
-        ytdlp.stderr.on('data', (data) => console.error('[yt-dlp]', data.toString()));
+        ytdlp.stderr.on('data', (data) => {
+            const message = data.toString();
+            if (processes.cancelled && /Interrupted by user/i.test(message)) return;
+            console.error('[yt-dlp]', message);
+        });
         fallbackFfmpeg.stderr.on('data', (data) => console.error('[ffmpeg]', data.toString()));
         ytdlp.on('error', (error) => console.error('Falha ao iniciar yt-dlp:', error));
         fallbackFfmpeg.on('error', (error) => {
@@ -439,6 +507,10 @@ function createRows(guildId) {
 async function updateMessage(guildId) {
     const msg = playerMessages.get(guildId);
     if (!msg) return;
+    if (typeof msg.client?.isReady === 'function' && !msg.client.isReady()) {
+        clearPlayerMessage(guildId, msg.id);
+        return;
+    }
     try {
         await msg.edit({ embeds: [createEmbed(guildId)], components: createRows(guildId) });
     } catch (err) {
@@ -465,19 +537,9 @@ async function playNext(guildId) {
     const song = queue.songs[0];
     queue.paused = false;
 
-    if (!song.streamUrl || Date.now() - song.resolvedAt > STREAM_URL_MAX_AGE) {
-        const requester = song.user;
-        const streamInfo = await getSongInfo(song.streamQuery ?? song.url);
-        if (song.preserveMetadata) {
-            song.streamUrl = streamInfo.streamUrl;
-            song.httpHeaders = streamInfo.httpHeaders;
-            song.resolvedAt = streamInfo.resolvedAt;
-            song.streamQuery = streamInfo.url;
-        } else {
-            Object.assign(song, streamInfo);
-        }
-        song.user = requester;
-    }
+    const currentResolution = resolveSongStream(song);
+    prefetchNextSong(queue);
+    await currentResolution;
 
     const { stream, processes } = createYtStream(song);
     queue.currentProcesses = processes;
@@ -487,6 +549,7 @@ async function playNext(guildId) {
     queue.player.play(resource);
     queue.currentResource = resource;
 
+    prefetchNextSong(queue);
     await setVoiceChannelStatus(queue.voiceChannel, createVoiceChannelStatus(song));
     await updateMessage(guildId);
 }
@@ -808,6 +871,7 @@ module.exports = {
                 if (queue.player.state.status === AudioPlayerStatus.Idle) {
                     await playNext(interaction.guild.id);
                 } else {
+                    prefetchNextSong(queue);
                     await updateMessage(interaction.guild.id);
                 }
                 await dismissReply(interaction);
@@ -839,6 +903,7 @@ module.exports = {
             if (queue.player.state.status === AudioPlayerStatus.Idle) {
                 await playNext(interaction.guild.id);
             } else {
+                prefetchNextSong(queue);
                 await updateMessage(interaction.guild.id);
                 await dismissReply(interaction);
                 return;
@@ -846,8 +911,13 @@ module.exports = {
 
             await dismissReply(interaction);
         } catch (error) {
-            console.error(error);
-            const response = '❌ Não foi possível carregar essa música. Confira a busca ou o link.';
+            const ageRestricted = error?.code === 'YOUTUBE_AGE_AUTH_REQUIRED';
+            if (ageRestricted) console.error(`[YouTube] ${error.message}`);
+            else console.error(error);
+
+            const response = ageRestricted
+                ? '❌ Este vídeo possui restrição de idade. Atualize o arquivo de cookies com uma conta do YouTube conectada e apta a assisti-lo.'
+                : '❌ Não foi possível carregar essa música. Confira a busca ou o link.';
             if (interaction.deferred || interaction.replied) await interaction.editReply(response);
             else await interaction.reply({ content: response, flags: 64 });
         } finally {
@@ -872,9 +942,13 @@ module.exports = {
     validateQuery,
     getSelectedStreamData,
     buildFfmpegHeaders,
+    createYtDlpError,
     handleAudioPlayerError,
     createVoiceChannelStatus,
     setVoiceChannelStatus,
     createSpotifyQueueSongs,
+    isSongStreamFresh,
+    resolveSongStream,
+    prefetchNextSong,
     resolveSpotify,
 };

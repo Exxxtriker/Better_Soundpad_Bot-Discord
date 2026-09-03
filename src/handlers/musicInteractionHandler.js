@@ -3,6 +3,7 @@ const {
     clearPlayerMessage,
     getDistubeQueue,
     guildQueues,
+    prefetchNextSong,
     stopCustomQueue,
     updateMessage,
 } = require('../commands/music/play');
@@ -93,6 +94,7 @@ module.exports = async (interaction) => {
                 const current = customQueue.songs.shift();
                 customQueue.songs.sort(() => Math.random() - 0.5);
                 if (current) customQueue.songs.unshift(current);
+                prefetchNextSong(customQueue);
             } else {
                 await distubeQueue.shuffle();
             }
