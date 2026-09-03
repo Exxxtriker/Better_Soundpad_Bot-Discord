@@ -21,6 +21,7 @@ const COOKIES_PATH = path.join(__dirname, '../commands-audios/cookies.txt');
 const STREAM_URL_MAX_AGE = 4 * 60 * 60 * 1000;
 const DEFAULT_MUSIC_VOLUME = 100;
 const MAX_SPOTIFY_QUEUE_SIZE = 1_000;
+const MAX_VOICE_STATUS_LENGTH = 500;
 
 // ─── Fila por guild ───────────────────────────────────────────────
 const guildQueues = new Map(); // guildId -> { songs[], player, connection, playing }
@@ -125,6 +126,30 @@ function stopProcesses(queue) {
 function handleAudioPlayerError(error) {
     if (/write after end/i.test(error?.message ?? '')) return;
     console.error(`Erro no player de áudio: ${error?.message ?? error}`);
+}
+
+function createVoiceChannelStatus(song) {
+    const title = song?.title ?? song?.name ?? 'Música desconhecida';
+    const duration = song?.formattedDuration
+        ?? (Number.isFinite(song?.duration) ? formatDuration(song.duration) : null);
+    return [
+        `Tocando agora: ${title}`,
+        duration,
+    ].filter(Boolean).join(' • ').slice(0, MAX_VOICE_STATUS_LENGTH);
+}
+
+async function setVoiceChannelStatus(voiceChannel, status) {
+    if (!voiceChannel?.client?.rest || !voiceChannel.id) return false;
+
+    try {
+        await voiceChannel.client.rest.put(`/channels/${voiceChannel.id}/voice-status`, {
+            body: { status: status?.slice(0, MAX_VOICE_STATUS_LENGTH) ?? null },
+        });
+        return true;
+    } catch (error) {
+        console.error('Erro ao atualizar o status da call:', error);
+        return false;
+    }
 }
 
 async function dismissReply(interaction) {
@@ -426,10 +451,11 @@ async function updateMessage(guildId) {
 }
 
 // ─── Toca a próxima música da fila ───────────────────────────────
-async function playNext(guildId, textChannel) {
+async function playNext(guildId) {
     const queue = guildQueues.get(guildId);
     if (!queue || queue.songs.length === 0) {
         stopProcesses(queue);
+        await setVoiceChannelStatus(queue?.voiceChannel, null);
         guildQueues.delete(guildId);
         safelyDestroyVoiceConnection(queue?.connection);
         await updateMessage(guildId);
@@ -461,13 +487,8 @@ async function playNext(guildId, textChannel) {
     queue.player.play(resource);
     queue.currentResource = resource;
 
+    await setVoiceChannelStatus(queue.voiceChannel, createVoiceChannelStatus(song));
     await updateMessage(guildId);
-
-    textChannel?.send({
-        content: `🎵 Tocando agora: **${song.title}** \`${song.formattedDuration}\`${song.user ? ` — Pedido por **${song.user.tag}**` : ''}`,
-        allowedMentions: { parse: [] },
-    }).then((message) => setTimeout(() => message.delete().catch(() => {}), 10_000))
-        .catch((error) => console.error('Erro ao anunciar música:', error));
 }
 
 function getSpotifyPlugin() {
@@ -551,11 +572,20 @@ function getDistube(client) {
             },
         });
         distube.on('initQueue', (queue) => queue.setVolume(DEFAULT_MUSIC_VOLUME));
-        distube.on('playSong', (queue) => updateMessage(queue.id));
+        distube.on('playSong', (queue, song) => {
+            setVoiceChannelStatus(queue.voiceChannel, createVoiceChannelStatus(song));
+            updateMessage(queue.id);
+        });
         distube.on('addSong', (queue) => updateMessage(queue.id));
         distube.on('finishSong', (queue) => updateMessage(queue.id));
-        distube.on('deleteQueue', (queue) => updateMessage(queue.id));
-        distube.on('disconnect', (queue) => updateMessage(queue.id));
+        distube.on('deleteQueue', (queue) => {
+            setVoiceChannelStatus(queue.voiceChannel, null);
+            updateMessage(queue.id);
+        });
+        distube.on('disconnect', (queue) => {
+            setVoiceChannelStatus(queue.voiceChannel, null);
+            updateMessage(queue.id);
+        });
         distube.on('ffmpegDebug', (message) => {
             if (/Premature close|-10054|Will reconnect|Error in the pull function/i.test(message)) return;
             const isProcessError = /\[(?:process|stream)\] error:/i.test(message);
@@ -602,11 +632,12 @@ async function stopCustomQueue(guildId) {
     guildQueues.delete(guildId);
     stopProcesses(queue);
     queue.player.stop(true);
+    await setVoiceChannelStatus(queue.voiceChannel, null);
     safelyDestroyVoiceConnection(queue.connection);
     await updateMessage(guildId);
 }
 
-async function advanceCustomQueue(guildId, textChannel, direction = 'next') {
+async function advanceCustomQueue(guildId, direction = 'next') {
     const queue = guildQueues.get(guildId);
     if (!queue || queue.transitioning) return false;
     if (direction === 'previous' && queue.history.length === 0) return false;
@@ -621,7 +652,7 @@ async function advanceCustomQueue(guildId, textChannel, direction = 'next') {
             const current = queue.songs.shift();
             if (current) queue.history.push(current);
         }
-        await playNext(guildId, textChannel);
+        await playNext(guildId);
         return true;
     } finally {
         const activeQueue = guildQueues.get(guildId);
@@ -630,7 +661,7 @@ async function advanceCustomQueue(guildId, textChannel, direction = 'next') {
 }
 
 // ─── Conecta ao canal de voz e monta o player ────────────────────
-async function ensureQueue(guild, voiceChannel, textChannel) {
+async function ensureQueue(guild, voiceChannel) {
     if (guildQueues.has(guild.id)) return guildQueues.get(guild.id);
 
     const connection = joinVoiceChannel({
@@ -656,6 +687,7 @@ async function ensureQueue(guild, voiceChannel, textChannel) {
         currentProcesses: null,
         currentResource: null,
         transitioning: false,
+        voiceChannel,
     };
 
     guildQueues.set(guild.id, queue);
@@ -674,7 +706,7 @@ async function ensureQueue(guild, voiceChannel, textChannel) {
                     const finished = q.songs.shift();
                     if (finished) q.history.push(finished);
                 }
-                await playNext(guild.id, textChannel);
+                await playNext(guild.id);
             } finally {
                 const activeQueue = guildQueues.get(guild.id);
                 if (activeQueue) activeQueue.transitioning = false;
@@ -697,6 +729,7 @@ async function ensureQueue(guild, voiceChannel, textChannel) {
                 ]);
             } catch {
                 const activeQueue = guildQueues.get(guild.id);
+                await setVoiceChannelStatus(activeQueue?.voiceChannel, null);
                 if (activeQueue?.connection === connection) guildQueues.delete(guild.id);
                 stopProcesses(activeQueue);
                 safelyDestroyVoiceConnection(connection);
@@ -769,11 +802,11 @@ module.exports = {
 
                 const resolved = await resolveSpotify(query, { member: interaction.member });
                 const spotifySongs = createSpotifyQueueSongs(resolved, interaction.user);
-                const queue = await ensureQueue(interaction.guild, voiceChannel, interaction.channel);
+                const queue = await ensureQueue(interaction.guild, voiceChannel);
                 queue.songs.push(...spotifySongs);
 
                 if (queue.player.state.status === AudioPlayerStatus.Idle) {
-                    await playNext(interaction.guild.id, interaction.channel);
+                    await playNext(interaction.guild.id);
                 } else {
                     await updateMessage(interaction.guild.id);
                 }
@@ -800,11 +833,11 @@ module.exports = {
             const songInfo = await getSongInfo(query);
             songInfo.user = interaction.user;
 
-            const queue = await ensureQueue(interaction.guild, voiceChannel, interaction.channel);
+            const queue = await ensureQueue(interaction.guild, voiceChannel);
             queue.songs.push(songInfo);
 
             if (queue.player.state.status === AudioPlayerStatus.Idle) {
-                await playNext(interaction.guild.id, interaction.channel);
+                await playNext(interaction.guild.id);
             } else {
                 await updateMessage(interaction.guild.id);
                 await dismissReply(interaction);
@@ -840,6 +873,8 @@ module.exports = {
     getSelectedStreamData,
     buildFfmpegHeaders,
     handleAudioPlayerError,
+    createVoiceChannelStatus,
+    setVoiceChannelStatus,
     createSpotifyQueueSongs,
     resolveSpotify,
 };

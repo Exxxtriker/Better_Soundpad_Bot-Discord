@@ -56,14 +56,14 @@ module.exports = async (interaction) => {
             break;
 
         case 'music_skip':
-            if (customQueue) await advanceCustomQueue(guildId, interaction.channel);
+            if (customQueue) await advanceCustomQueue(guildId);
             else await distubeQueue.skip();
             await updateMessage(guildId);
             break;
 
         case 'music_prev':
             if (customQueue) {
-                const changed = await advanceCustomQueue(guildId, interaction.channel, 'previous');
+                const changed = await advanceCustomQueue(guildId, 'previous');
                 if (!changed) throw new Error('Não há música anterior.');
             } else {
                 await distubeQueue.previous();
