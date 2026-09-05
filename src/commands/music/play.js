@@ -15,6 +15,7 @@ const { PassThrough } = require('stream');
 const ffmpegPath = require('ffmpeg-static');
 const activePlayers = require('../../handlers/activePlayers');
 const { safelyDestroyVoiceConnection } = require('../../utils/voiceConnection');
+const { createVoiceSessionGuard } = require('../../utils/voiceSessionGuard');
 
 const YT_DLP_PATH = path.join(__dirname, '../commands-audios/yt-dlp.exe');
 const COOKIES_PATH = path.join(__dirname, '../commands-audios/cookies.txt');
@@ -29,6 +30,7 @@ const playerMessages = new Map(); // guildId -> Message
 const playerMessageDeleteListeners = new Map(); // guildId -> { client, listener }
 const pendingPlayRequests = new Map(); // guildId -> quantidade de /play em processamento
 const retriedDistubeSongs = new WeakSet();
+const distubeVoiceGuards = new WeakMap();
 let distube = null;
 let spotifyPlugin = null;
 let spotifyPublicPlugin = null;
@@ -54,6 +56,21 @@ function clearPlayerMessage(guildId, expectedMessageId) {
         playerMessageDeleteListeners.delete(guildId);
     }
     return Boolean(currentMessage || registration);
+}
+
+async function closePlayerMessage(guildId) {
+    const message = playerMessages.get(guildId);
+    if (!message) return;
+    clearPlayerMessage(guildId, message.id);
+    try {
+        await message.delete();
+    } catch (error) {
+        if (error.code === 10008) return;
+        console.error('Erro ao remover o menu de música:', error);
+        await message.edit({ components: [] }).catch((editError) => {
+            if (editError.code !== 10008) console.error('Erro ao desativar o menu de música:', editError);
+        });
+    }
 }
 
 function registerPlayerMessage(guildId, message, client) {
@@ -552,11 +569,12 @@ async function updateMessage(guildId) {
 // ─── Toca a próxima música da fila ───────────────────────────────
 async function playNext(guildId) {
     const queue = guildQueues.get(guildId);
-    if (!queue || queue.songs.length === 0) {
+    if (!queue) return;
+    if (queue.songs.length === 0) {
         stopProcesses(queue);
-        await setVoiceChannelStatus(queue?.voiceChannel, null);
-        guildQueues.delete(guildId);
-        safelyDestroyVoiceConnection(queue?.connection);
+        queue.currentResource = null;
+        queue.voiceGuard?.syncState();
+        await setVoiceChannelStatus(queue.voiceChannel, null);
         await updateMessage(guildId);
         return;
     }
@@ -567,6 +585,7 @@ async function playNext(guildId) {
     const currentResolution = resolveSongStream(song);
     prefetchNextSong(queue);
     await currentResolution;
+    if (guildQueues.get(guildId) !== queue || queue.songs[0] !== song) return;
 
     const { stream, processes } = createYtStream(song);
     queue.currentProcesses = processes;
@@ -644,6 +663,16 @@ function createSpotifyQueueSongs(resolved, user) {
     });
 }
 
+async function stopDistubeSession(guildId, expectedVoice, deleteMenu = true) {
+    const voice = distube?.voices.get(guildId);
+    if (!voice || (expectedVoice && expectedVoice !== voice)) return;
+    const { channel } = voice;
+    distubeVoiceGuards.get(voice)?.dispose();
+    const closingMenu = deleteMenu ? closePlayerMessage(guildId) : Promise.resolve();
+    voice.leave();
+    await Promise.all([closingMenu, setVoiceChannelStatus(channel, null)]);
+}
+
 // ─── DisTube apenas para SoundCloud ──────────────────────────────
 function getDistube(client) {
     if (!distube) {
@@ -661,7 +690,19 @@ function getDistube(client) {
                 },
             },
         });
-        distube.on('initQueue', (queue) => queue.setVolume(DEFAULT_MUSIC_VOLUME));
+        distube.on('initQueue', (queue) => {
+            queue.setVolume(DEFAULT_MUSIC_VOLUME);
+            const { voice } = queue;
+            const existingGuard = distubeVoiceGuards.get(voice);
+            if (existingGuard && !existingGuard.disposed) return;
+            distubeVoiceGuards.set(voice, createVoiceSessionGuard({
+                client,
+                connection: voice.connection,
+                player: voice.audioPlayer,
+                voiceChannel: queue.voiceChannel,
+                onLeave: () => stopDistubeSession(queue.id, voice),
+            }));
+        });
         distube.on('playSong', (queue, song) => {
             setVoiceChannelStatus(queue.voiceChannel, createVoiceChannelStatus(song));
             updateMessage(queue.id);
@@ -674,7 +715,7 @@ function getDistube(client) {
         });
         distube.on('disconnect', (queue) => {
             setVoiceChannelStatus(queue.voiceChannel, null);
-            updateMessage(queue.id);
+            closePlayerMessage(queue.id);
         });
         distube.on('ffmpegDebug', (message) => {
             if (/Premature close|-10054|Will reconnect|Error in the pull function/i.test(message)) return;
@@ -710,7 +751,8 @@ function getDistubeQueue(guildId) {
 function isMusicActive(guildId) {
     return pendingPlayRequests.has(guildId)
         || guildQueues.has(guildId)
-        || Boolean(getDistubeQueue(guildId));
+        || Boolean(getDistubeQueue(guildId))
+        || Boolean(distube?.voices.get(guildId));
 }
 
 async function stopCustomQueue(guildId) {
@@ -718,13 +760,14 @@ async function stopCustomQueue(guildId) {
     if (!queue) return;
 
     queue.transitioning = true;
+    queue.voiceGuard?.dispose();
     queue.songs = [];
     guildQueues.delete(guildId);
+    const closingMenu = closePlayerMessage(guildId);
     stopProcesses(queue);
     queue.player.stop(true);
-    await setVoiceChannelStatus(queue.voiceChannel, null);
     safelyDestroyVoiceConnection(queue.connection);
-    await updateMessage(guildId);
+    await Promise.all([closingMenu, setVoiceChannelStatus(queue.voiceChannel, null)]);
 }
 
 async function advanceCustomQueue(guildId, direction = 'next') {
@@ -752,7 +795,12 @@ async function advanceCustomQueue(guildId, direction = 'next') {
 
 // ─── Conecta ao canal de voz e monta o player ────────────────────
 async function ensureQueue(guild, voiceChannel) {
+    if (!voiceChannel.members.some((member) => !member.user.bot)) {
+        throw new Error('Não há usuários no canal de voz para iniciar a reprodução.');
+    }
     if (guildQueues.has(guild.id)) return guildQueues.get(guild.id);
+    // Troca de backend sem encerrar o menu que será reutilizado pela nova fila.
+    if (!getDistubeQueue(guild.id) && distube?.voices.get(guild.id)) await stopDistubeSession(guild.id, undefined, false);
 
     const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
@@ -760,7 +808,12 @@ async function ensureQueue(guild, voiceChannel) {
         adapterCreator: guild.voiceAdapterCreator,
     });
 
-    await entersState(connection, VoiceConnectionStatus.Ready, 10_000);
+    try {
+        await entersState(connection, VoiceConnectionStatus.Ready, 10_000);
+    } catch (error) {
+        safelyDestroyVoiceConnection(connection);
+        throw error;
+    }
 
     const player = createAudioPlayer();
     player.on('error', handleAudioPlayerError);
@@ -781,6 +834,16 @@ async function ensureQueue(guild, voiceChannel) {
     };
 
     guildQueues.set(guild.id, queue);
+    queue.voiceGuard = createVoiceSessionGuard({
+        client: guild.client,
+        connection,
+        player,
+        voiceChannel,
+        onLeave: () => {
+            if (guildQueues.get(guild.id) === queue) return stopCustomQueue(guild.id);
+            return undefined;
+        },
+    });
 
     player.on(AudioPlayerStatus.Idle, () => {
         const handleIdle = async () => {
@@ -820,11 +883,8 @@ async function ensureQueue(guild, voiceChannel) {
                 ]);
             } catch {
                 const activeQueue = guildQueues.get(guild.id);
-                await setVoiceChannelStatus(activeQueue?.voiceChannel, null);
-                if (activeQueue?.connection === connection) guildQueues.delete(guild.id);
-                stopProcesses(activeQueue);
-                safelyDestroyVoiceConnection(connection);
-                await updateMessage(guild.id);
+                if (activeQueue?.connection === connection) await stopCustomQueue(guild.id);
+                else safelyDestroyVoiceConnection(connection);
             }
         };
 
@@ -957,6 +1017,7 @@ module.exports = {
     guildQueues,
     playerMessages,
     clearPlayerMessage,
+    closePlayerMessage,
     registerPlayerMessage,
     createEmbed,
     createRows,
@@ -966,6 +1027,7 @@ module.exports = {
     getDistubeQueue,
     isMusicActive,
     stopCustomQueue,
+    stopDistubeSession,
     formatDuration,
     validateQuery,
     getSelectedStreamData,

@@ -5,6 +5,7 @@ const {
 const path = require('path');
 const fs = require('fs');
 const { safelyDestroyVoiceConnection } = require('../utils/voiceConnection');
+const { createVoiceSessionGuard } = require('../utils/voiceSessionGuard');
 
 class AudioPlayerManager {
     constructor(guild, voiceChannel, audioFolder, supportedExtensions, client, onDestroy) {
@@ -36,9 +37,6 @@ class AudioPlayerManager {
         this.updateMessage = null; // função para atualizar embed e componentes
         this.sentMessage = null; // mensagem enviada para editar
 
-        this.idleTimeout = null; // Timeout para desconectar após ficar idle
-        this.idleTime = 30 * 60 * 1000; // 30 minutos padrão
-
         this.currentPage = 1; // paginação
         this.itemsPerPage = 25; // áudios por página
 
@@ -49,6 +47,7 @@ class AudioPlayerManager {
 
         // Listener do player
         this.player.on(AudioPlayerStatus.Idle, () => {
+            if (this.destroyed) return;
             if (this.loopEnabled && this.currentResource) {
                 this.playResource(this.currentResource.metadata.path);
             } else {
@@ -59,8 +58,6 @@ class AudioPlayerManager {
             }
         });
 
-        this.player.on('playing', () => this.clearIdleTimeout());
-
         this.player.on('error', (error) => {
             console.error('Erro no player:', error);
             this.currentResource = null;
@@ -69,16 +66,13 @@ class AudioPlayerManager {
             this.startIdleTimeout();
         });
 
-        // 🔹 Monitora o canal automaticamente
-        this.voiceStateListener = () => {
-            const nonBotMembers = this.voiceChannel.members.filter((m) => !m.user.bot);
-            if (nonBotMembers.size === 0) {
-                // Ninguém humano no canal
-                this.destroy({ deleteMessage: true });
-            }
-        };
-
-        this.client.on('voiceStateUpdate', this.voiceStateListener);
+        this.voiceGuard = createVoiceSessionGuard({
+            client,
+            voiceChannel,
+            connection: this.connection,
+            player: this.player,
+            onLeave: () => this.destroy({ deleteMessage: true }),
+        });
     }
 
     // ----------------- Paginação e Reload -----------------
@@ -105,6 +99,12 @@ class AudioPlayerManager {
     }
 
     setSentMessage(message) {
+        if (this.destroyed) {
+            message.delete().catch((error) => {
+                if (error.code !== 10008) console.error('Erro ao remover o menu de áudio:', error);
+            });
+            return;
+        }
         this.sentMessage = message;
     }
 
@@ -137,9 +137,9 @@ class AudioPlayerManager {
     }
 
     stop() {
-        this.player.stop(true);
         this.currentResource = null;
         this.currentAudioName = null;
+        this.player.stop(true);
         if (!this.destroyed) this.startIdleTimeout();
     }
 
@@ -158,15 +158,11 @@ class AudioPlayerManager {
     destroy({ deleteMessage = false } = {}) {
         if (this.destroyed) return;
         this.destroyed = true;
-        this.clearIdleTimeout();
+        this.voiceGuard?.dispose();
         this.player.stop(true);
         this.currentResource = null;
         this.currentAudioName = null;
         safelyDestroyVoiceConnection(this.connection);
-        if (this.client && this.voiceStateListener) {
-            this.client.removeListener('voiceStateUpdate', this.voiceStateListener);
-            this.voiceStateListener = null;
-        }
         if (deleteMessage && this.sentMessage && !this.sentMessage.deleted) {
             this.sentMessage.delete().catch(() => {});
         }
@@ -175,18 +171,11 @@ class AudioPlayerManager {
     }
 
     startIdleTimeout() {
-        if (this.idleTimeout || this.destroyed) return;
-
-        this.idleTimeout = setTimeout(() => {
-            this.destroy({ deleteMessage: true });
-        }, this.idleTime);
+        this.voiceGuard?.syncState();
     }
 
     clearIdleTimeout() {
-        if (this.idleTimeout) {
-            clearTimeout(this.idleTimeout);
-            this.idleTimeout = null;
-        }
+        this.voiceGuard?.clearIdleTimeout();
     }
 }
 
