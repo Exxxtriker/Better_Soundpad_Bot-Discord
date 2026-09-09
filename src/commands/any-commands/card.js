@@ -11,8 +11,8 @@ const {
     getCardDescription,
     getCardInstances,
     getCardQuantity,
+    getCardState,
     getCardValue,
-    getFloatCondition,
     getOwnedCards,
     isCardMarried,
     migrateLegacyCardInstances,
@@ -61,7 +61,7 @@ function createCardEmbed(user, profile, card, notice = '', requestedInstance = n
         profile,
         instance?.uid || card.id,
     ));
-    const condition = instance ? getFloatCondition(instance.float) : null;
+    const condition = instance ? getCardState(instance.float) : null;
     const estimatedValue = instance ? getCardValue(card, instance.float) : 0;
     const ownerName = user.displayName || user.globalName || user.username;
     const footer = {
@@ -76,7 +76,7 @@ function createCardEmbed(user, profile, card, notice = '', requestedInstance = n
             notice,
             `*${card.type} • ${card.rarity}*`,
             `🔬 Float · **${instance ? formatFloat(instance.float) : '—'}**`,
-            condition ? `${condition.emoji} ${condition.name}` : '',
+            condition ? `${condition.emoji} Estado · **${condition.name}**` : '',
             `🪙 Valor · **${estimatedValue.toLocaleString('pt-BR')}**`,
             `🏷️ Série · \`${instance?.uid.slice(0, 8).toUpperCase() || '—'}\``,
             `🃏 Cópias · **${quantity}**`,
@@ -173,10 +173,13 @@ async function autocompleteCards(interaction) {
             `${card.name} ${card.type} ${card.rarity} ${instance.uid}`.toLowerCase().includes(search)
         ))
         .slice(0, 25)
-        .map(({ card, instance }) => ({
-            name: `${card.emoji} ${card.name} • ${card.rarity} • F ${formatFloat(instance.float)}`.slice(0, 100),
-            value: instance.uid,
-        }));
+        .map(({ card, instance }) => {
+            const state = getCardState(instance.float);
+            return {
+                name: `${card.emoji} ${card.name} • ${card.rarity} • F ${formatFloat(instance.float)} • ${state.name}`.slice(0, 100),
+                value: instance.uid,
+            };
+        });
 }
 
 function cardOption(option) {

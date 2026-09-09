@@ -1,12 +1,14 @@
 const {
-    ActionRowBuilder,
     AttachmentBuilder,
-    ButtonBuilder,
-    ButtonStyle,
     EmbedBuilder,
     SlashCommandBuilder,
 } = require('discord.js');
 const path = require('node:path');
+const {
+    buildCarouselControls,
+    registerCarousel,
+} = require('../../handlers/carouselInteractionHandler');
+const { getDisplayAttachment } = require('../../utils/imageAttachmentCache');
 const Profile = require('../../models/profile');
 const {
     addCardInstance,
@@ -14,9 +16,9 @@ const {
     drawCard,
     formatFloat,
     getCardArtwork,
+    getCardState,
     getCardTotal,
     getCardValue,
-    getFloatCondition,
     migrateLegacyCardInstances,
     RARITY_COLORS,
 } = require('../../utils/cardCatalog');
@@ -86,7 +88,7 @@ function buildOwnerFooter(user, position) {
 
 function buildCollectibleReveal(reward, position, user = null) {
     const { card, instance, boosted } = reward;
-    const condition = getFloatCondition(instance.float);
+    const condition = getCardState(instance.float);
     const value = getCardValue(card, instance.float);
     const embed = new EmbedBuilder()
         .setColor(RARITY_COLORS[card.rarity])
@@ -94,7 +96,7 @@ function buildCollectibleReveal(reward, position, user = null) {
         .setDescription([
             `*${card.type} • ${card.rarity}*`,
             `🔬 Float · **${formatFloat(instance.float)}**`,
-            `${condition.emoji} ${condition.name}`,
+            `${condition.emoji} Estado · **${condition.name}**`,
             `🪙 Valor · **${value.toLocaleString('pt-BR')}**`,
             `🏷️ Série · \`${instance.uid.slice(0, 8).toUpperCase()}\``,
             boosted ? '✨ Booster aplicado' : '',
@@ -112,7 +114,8 @@ function buildCollectibleReveal(reward, position, user = null) {
 }
 
 function buildJokerReveal(remaining, cardTotal, capacity, user = null) {
-    const attachmentName = 'joker-gideon.png';
+    const artwork = getDisplayAttachment(JOKER_ARTWORK, 'joker-gideon.jpg');
+    const attachmentName = artwork.name;
     const embed = new EmbedBuilder()
         .setColor(0xC9A227)
         .setTitle('🃏 Coringa do Gideon')
@@ -127,29 +130,14 @@ function buildJokerReveal(remaining, cardTotal, capacity, user = null) {
         .setFooter(buildOwnerFooter(user, 3));
     return {
         embed,
-        file: new AttachmentBuilder(JOKER_ARTWORK, { name: attachmentName }),
+        file: new AttachmentBuilder(artwork.attachment, { name: attachmentName }),
     };
-}
-
-function buildCarouselControls(position, locked = false) {
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('card_pack_previous')
-            .setEmoji('◀️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(locked || position === 0),
-        new ButtonBuilder()
-            .setCustomId('card_pack_next')
-            .setEmoji('▶️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(locked || position === 2),
-    );
 }
 
 function slidePayload(slide, position, locked = false) {
     return {
         embeds: [slide.embed],
-        components: [buildCarouselControls(position, locked)],
+        components: [buildCarouselControls(position, 3, locked)],
         files: slide.file ? [slide.file] : [],
         attachments: [],
     };
@@ -208,32 +196,11 @@ module.exports = {
             interaction.user,
         );
         const slides = [...collectibleReveals, jokerReveal];
-        let position = 0;
+        const position = 0;
         await interaction.reply(slidePayload(slides[position], position));
-        const message = await interaction.fetchReply();
-        const collector = message.createMessageComponentCollector({ time: 180_000 });
-
-        collector.on('collect', async (componentInteraction) => {
-            if (componentInteraction.user.id !== interaction.user.id) {
-                await componentInteraction.reply({
-                    content: '❌ Somente quem abriu o pacote pode navegar por estas cartas.',
-                    flags: 64,
-                });
-                return;
-            }
-            position += componentInteraction.customId === 'card_pack_next' ? 1 : -1;
-            position = Math.max(0, Math.min(slides.length - 1, position));
-            try {
-                await componentInteraction.update(slidePayload(slides[position], position));
-            } catch (error) {
-                if (error?.code !== 10008) console.error('Erro ao navegar pelo pacote:', error);
-            }
-        });
-
-        collector.on('end', async () => {
-            await interaction.editReply({
-                components: [buildCarouselControls(position, true)],
-            }).catch(() => {});
+        await registerCarousel(interaction, {
+            total: slides.length,
+            render: (nextPosition) => slidePayload(slides[nextPosition], nextPosition),
         });
 
         return undefined;

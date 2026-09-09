@@ -1,10 +1,11 @@
 const {
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
     EmbedBuilder,
     SlashCommandBuilder,
 } = require('discord.js');
+const {
+    buildCarouselControls,
+    registerCarousel,
+} = require('../../handlers/carouselInteractionHandler');
 const { getProfile } = require('../../utils/profileManager');
 const {
     RARITIES,
@@ -52,46 +53,41 @@ function resolveSortMode(profile, requestedSortMode) {
     return ORDER_REQUIREMENTS[savedSortMode] <= organizer ? savedSortMode : 'rarity';
 }
 
-function buildCollectionSlides(user, profile, requestedSortMode) {
+function buildCollectionEntries(profile, requestedSortMode) {
     const sortMode = resolveSortMode(profile, requestedSortMode);
     const cards = sortCards(getOwnedCards(profile), sortMode);
-    const ownerName = user.displayName || user.globalName || user.username;
-    const avatar = user.displayAvatarURL?.({ size: 64 });
-
-    const slides = cards.flatMap((card) => [...(card.instances || [])]
+    const entries = cards.flatMap((card) => [...(card.instances || [])]
         .sort((left, right) => Number(left.float) - Number(right.float))
-        .map((instance) => {
-            const payload = createCardEmbed(user, profile, card, '', instance);
-            return {
-                embed: payload.embeds[0],
-                file: payload.files?.[0] || null,
-            };
-        }));
-
-    slides.forEach((slide, index) => {
-        const footer = {
-            text: `Pertence a ${ownerName} • ${ORDER_LABELS[sortMode]} • ${index + 1}/${slides.length}`,
-        };
-        if (avatar) footer.iconURL = avatar;
-        slide.embed.setFooter(footer);
-    });
-
-    return slides;
+        .map((instance) => ({ card, instance })));
+    return { entries, sortMode };
 }
 
-function buildCarouselControls(position, total, locked = false) {
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('cards_previous')
-            .setEmoji('◀️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(locked || position <= 0),
-        new ButtonBuilder()
-            .setCustomId('cards_next')
-            .setEmoji('▶️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(locked || position >= total - 1),
-    );
+function buildCollectionSlide(user, profile, entry, index, total, sortMode) {
+    const ownerName = user.displayName || user.globalName || user.username;
+    const avatar = user.displayAvatarURL?.({ size: 64 });
+    const payload = createCardEmbed(user, profile, entry.card, '', entry.instance);
+    const slide = {
+        embed: payload.embeds[0],
+        file: payload.files?.[0] || null,
+    };
+    const footer = {
+        text: `Pertence a ${ownerName} • ${ORDER_LABELS[sortMode]} • ${index + 1}/${total}`,
+    };
+    if (avatar) footer.iconURL = avatar;
+    slide.embed.setFooter(footer);
+    return slide;
+}
+
+function buildCollectionSlides(user, profile, requestedSortMode) {
+    const { entries, sortMode } = buildCollectionEntries(profile, requestedSortMode);
+    return entries.map((entry, index) => buildCollectionSlide(
+        user,
+        profile,
+        entry,
+        index,
+        entries.length,
+        sortMode,
+    ));
 }
 
 function slidePayload(slide, position, total) {
@@ -141,8 +137,8 @@ module.exports = {
             });
         }
 
-        const slides = buildCollectionSlides(user, profile, requestedSortMode);
-        if (!slides.length) {
+        const { entries, sortMode } = buildCollectionEntries(profile, requestedSortMode);
+        if (!entries.length) {
             const ownerName = user.displayName || user.globalName || user.username;
             return interaction.reply({
                 embeds: [new EmbedBuilder()
@@ -152,40 +148,33 @@ module.exports = {
             });
         }
 
-        let position = 0;
-        await interaction.reply(slidePayload(slides[position], position, slides.length));
-        const message = await interaction.fetchReply();
-        const collector = message.createMessageComponentCollector({ time: 180_000 });
-
-        collector.on('collect', async (componentInteraction) => {
-            if (componentInteraction.user.id !== interaction.user.id) {
-                await componentInteraction.reply({
-                    content: '❌ Somente quem abriu o álbum pode folhear estas cartas.',
-                    flags: 64,
-                }).catch(() => {});
-                return;
-            }
-
-            position += componentInteraction.customId === 'cards_next' ? 1 : -1;
-            position = Math.max(0, Math.min(slides.length - 1, position));
-            try {
-                await componentInteraction.update(slidePayload(slides[position], position, slides.length));
-            } catch (error) {
-                if (error?.code !== 10008) console.error('Erro ao navegar pelo álbum:', error);
-            }
-        });
-
-        collector.on('end', async () => {
-            if (slides.length < 2) return;
-            await interaction.editReply({
-                components: [buildCarouselControls(position, slides.length, true)],
-            }).catch(() => {});
-        });
+        const position = 0;
+        const renderSlide = (nextPosition) => slidePayload(
+            buildCollectionSlide(
+                user,
+                profile,
+                entries[nextPosition],
+                nextPosition,
+                entries.length,
+                sortMode,
+            ),
+            nextPosition,
+            entries.length,
+        );
+        await interaction.reply(renderSlide(position));
+        if (entries.length > 1) {
+            await registerCarousel(interaction, {
+                total: entries.length,
+                render: renderSlide,
+            });
+        }
 
         return undefined;
     },
 
     buildCarouselControls,
+    buildCollectionEntries,
+    buildCollectionSlide,
     buildCollectionSlides,
     resolveSortMode,
     slidePayload,

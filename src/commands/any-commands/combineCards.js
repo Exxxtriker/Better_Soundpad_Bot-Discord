@@ -9,8 +9,8 @@ const {
     getCard,
     getCardArtwork,
     getCardInstances,
+    getCardState,
     getCardValue,
-    getFloatCondition,
     isCardMarried,
     migrateLegacyCardInstances,
     removeCardInstances,
@@ -120,6 +120,7 @@ async function getCombineAutocomplete(interaction) {
                 `${card.emoji} ${card.name}`,
                 card.rarity,
                 `F ${formatFloat(instance.float)}`,
+                getCardState(instance.float).name,
                 `${getCardValue(card, instance.float).toLocaleString('pt-BR')}🪙`,
             ].join(' • ').slice(0, 100),
             value: instance.uid,
@@ -184,7 +185,7 @@ module.exports = {
         let outcome = '🜂 **Raridade mantida.**';
         if (result.upgraded) outcome = '✨ **Raridade elevada!**';
         if (result.mythicalReroll) outcome = '♻️ **Float mítico rerrolado.**';
-        const condition = getFloatCondition(result.resultInstance.float);
+        const condition = getCardState(result.resultInstance.float);
         const value = getCardValue(result.resultCard, result.resultInstance.float);
         const ownerName = interaction.user.displayName
             || interaction.user.globalName
@@ -203,7 +204,7 @@ module.exports = {
                 ).join(' + ')}**`,
                 `*${result.resultCard.type} • ${result.resultCard.rarity}*`,
                 `🔬 Float · **${formatFloat(result.resultInstance.float)}**`,
-                `${condition.emoji} ${condition.name}`,
+                `${condition.emoji} Estado · **${condition.name}**`,
                 `🪙 Valor · **${value.toLocaleString('pt-BR')}**`,
                 `🏷️ Série · \`${result.resultInstance.uid.slice(0, 8).toUpperCase()}\``,
                 result.mythicalReroll

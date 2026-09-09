@@ -13,8 +13,8 @@ const {
     getCard,
     getCardArtwork,
     getCardInstances,
+    getCardState,
     getCardValue,
-    getFloatCondition,
     getOwnedCards,
     isCardMarried,
     migrateLegacyCardInstances,
@@ -103,13 +103,13 @@ async function tradeCards(trade, dependencies = {}) {
 
 function formatTradeInstance(card, instance) {
     if (!instance) return `${card.emoji} **${card.name}**\n◆ ${card.rarity}`;
-    const condition = getFloatCondition(instance.float);
+    const condition = getCardState(instance.float);
     const value = getCardValue(card, instance.float);
     return [
         `${card.emoji} **${card.name}**`,
         `*${card.type} • ${card.rarity}*`,
         `🔬 Float · **${formatFloat(instance.float)}**`,
-        `${condition.emoji} ${condition.name}`,
+        `${condition.emoji} Estado · **${condition.name}**`,
         `🪙 Valor · **${value.toLocaleString('pt-BR')}**`,
         `🏷️ Série · \`${instance.uid.slice(0, 8).toUpperCase()}\``,
     ].join('\n');
@@ -197,10 +197,13 @@ async function getAutocompleteCards(interaction) {
         .filter(({ card, instance }) => !isCardMarried(profile, instance.uid)
             && `${card.name} ${card.type} ${card.rarity} ${instance.uid}`.toLowerCase().includes(search))
         .slice(0, 25)
-        .map(({ card, instance }) => ({
-            name: `${card.emoji} ${card.name} • ${card.rarity} • F ${formatFloat(instance.float)}`.slice(0, 100),
-            value: instance.uid,
-        }));
+        .map(({ card, instance }) => {
+            const state = getCardState(instance.float);
+            return {
+                name: `${card.emoji} ${card.name} • ${card.rarity} • F ${formatFloat(instance.float)} • ${state.name}`.slice(0, 100),
+                value: instance.uid,
+            };
+        });
 }
 
 module.exports = {

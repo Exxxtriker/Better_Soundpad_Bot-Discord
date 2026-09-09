@@ -42,6 +42,13 @@ client.on('interactionCreate', (interaction) => {
     musicInteractionHandler(interaction).catch((error) => console.error('Erro no player de música:', error));
 });
 
+const carouselInteractionHandler = require('./src/handlers/carouselInteractionHandler');
+
+client.on('interactionCreate', (interaction) => {
+    carouselInteractionHandler.handleCarouselInteraction(interaction)
+        .catch((error) => console.error('Erro no carrossel:', error));
+});
+
 async function connectMongo() {
     try {
         await mongoose.connect(process.env.MONGO_URI, MONGO_OPTIONS);

@@ -1,5 +1,6 @@
 const { randomInt, randomUUID } = require('node:crypto');
 const path = require('node:path');
+const { getDisplayAttachment } = require('./imageAttachmentCache');
 
 const RARITIES = ['Comum', 'Incomum', 'Raro', 'Épico', 'Lendário', 'Mítico'];
 const RARITY_COLORS = {
@@ -380,11 +381,8 @@ function getCardArtwork(cardOrId) {
     const filename = CARD_ARTWORK[cardId];
     if (!filename) return null;
 
-    return {
-        attachment: path.join(__dirname, '..', 'assets', 'cards', filename),
-        name: filename,
-        url: `attachment://${filename}`,
-    };
+    const sourceAttachment = path.join(__dirname, '..', 'assets', 'cards', filename);
+    return getDisplayAttachment(sourceAttachment, filename);
 }
 
 function getCardsByRarity(rarity) {
@@ -404,10 +402,26 @@ function formatFloat(float) {
     return Math.min(1, Math.max(0, Number(float) || 0)).toFixed(6);
 }
 
+function getCardState(float) {
+    const numericFloat = Number(float);
+    const normalized = Number.isFinite(numericFloat)
+        ? Math.min(1, Math.max(0, numericFloat))
+        : 1;
+    const index = FLOAT_CONDITIONS.findIndex((condition) => normalized < condition.maximum);
+    const resolvedIndex = index >= 0 ? index : FLOAT_CONDITIONS.length - 1;
+    const condition = FLOAT_CONDITIONS[resolvedIndex];
+
+    return {
+        ...condition,
+        minimum: resolvedIndex === 0 ? 0 : FLOAT_CONDITIONS[resolvedIndex - 1].maximum,
+        float: normalized,
+    };
+}
+
+// Compatibilidade com chamadas antigas. O estado nunca é sorteado ou salvo:
+// ele é sempre recalculado a partir do Float da instância.
 function getFloatCondition(float) {
-    const normalized = Math.min(1, Math.max(0, Number(float) || 0));
-    return FLOAT_CONDITIONS.find((condition) => normalized < condition.maximum)
-        || FLOAT_CONDITIONS.at(-1);
+    return getCardState(float);
 }
 
 function getCardValue(cardOrId, float) {
@@ -636,6 +650,7 @@ module.exports = {
     getCardDescription,
     getCardInstances,
     getCardQuantity,
+    getCardState,
     getCardTotal,
     getCardValue,
     getCardsByRarity,
