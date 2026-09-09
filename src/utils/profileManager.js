@@ -1,4 +1,5 @@
 const Profile = require('../models/profile');
+const { migrateLegacyCardInstances } = require('./cardCatalog');
 
 const XP_PER_ACTION = 1;
 const POINTS_PER_ACTION = 2;
@@ -13,14 +14,14 @@ function calculateRank(level) {
     return 'Novato';
 }
 
-async function updateProgress(userId, username) {
+async function updateProgress(guildId, userId, username) {
     const now = new Date();
     const profile = await Profile.findOneAndUpdate(
-        { userId },
+        { guildId, userId },
         {
             $inc: { points: POINTS_PER_ACTION, xp: XP_PER_ACTION },
             $set: { lastInteraction: now, username },
-            $setOnInsert: { userId },
+            $setOnInsert: { guildId, userId },
         },
         { new: true, upsert: true, setDefaultsOnInsert: true },
     );
@@ -39,15 +40,20 @@ async function updateProgress(userId, username) {
     return profile;
 }
 
-async function addInteraction(userId, username) {
-    const previous = progressUpdateQueues.get(userId) ?? Promise.resolve();
-    const update = previous.catch(() => {}).then(() => updateProgress(userId, username));
-    progressUpdateQueues.set(userId, update);
+async function withProfileLock(guildId, userId, operation) {
+    const lockKey = `${guildId}:${userId}`;
+    const previous = progressUpdateQueues.get(lockKey) ?? Promise.resolve();
+    const update = previous.catch(() => {}).then(operation);
+    progressUpdateQueues.set(lockKey, update);
     try {
         return await update;
     } finally {
-        if (progressUpdateQueues.get(userId) === update) progressUpdateQueues.delete(userId);
+        if (progressUpdateQueues.get(lockKey) === update) progressUpdateQueues.delete(lockKey);
     }
+}
+
+async function addInteraction(guildId, userId, username) {
+    return withProfileLock(guildId, userId, () => updateProgress(guildId, userId, username));
 }
 
 // Verifica emblemas e desbloqueia recompensas
@@ -104,8 +110,16 @@ async function checkEmblems(profile) {
     return { newEmblems, newRewards };
 }
 
-async function getProfile(userId) {
-    return Profile.findOne({ userId });
+async function getProfile(guildId, userId) {
+    const profile = await Profile.findOne({ guildId, userId });
+    if (profile && migrateLegacyCardInstances(profile) > 0) await profile.save();
+    return profile;
 }
 
-module.exports = { addInteraction, checkEmblems, getProfile };
+module.exports = {
+    addInteraction,
+    calculateRank,
+    checkEmblems,
+    getProfile,
+    withProfileLock,
+};

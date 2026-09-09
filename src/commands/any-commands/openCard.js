@@ -1,0 +1,247 @@
+const {
+    ActionRowBuilder,
+    AttachmentBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    EmbedBuilder,
+    SlashCommandBuilder,
+} = require('discord.js');
+const path = require('node:path');
+const Profile = require('../../models/profile');
+const {
+    addCardInstance,
+    createCardInstance,
+    drawCard,
+    formatFloat,
+    getCardArtwork,
+    getCardTotal,
+    getCardValue,
+    getFloatCondition,
+    migrateLegacyCardInstances,
+    RARITY_COLORS,
+} = require('../../utils/cardCatalog');
+const { withProfileLock } = require('../../utils/profileManager');
+
+const PACK_NAMES = {
+    basic: 'Pacote Básico',
+    arcane: 'Pacote Arcano',
+};
+const COLLECTIBLE_CARDS_PER_PACK = 2;
+const JOKER_ARTWORK = path.join(__dirname, '..', '..', 'assets', 'cards', 'joker_gideon.png');
+
+async function openPack(guildId, userId, username, packType, ProfileModel = Profile) {
+    return withProfileLock(guildId, userId, async () => {
+        await ProfileModel.updateOne(
+            { guildId, userId },
+            {
+                $set: { username },
+                $setOnInsert: { guildId, userId },
+            },
+            { upsert: true, setDefaultsOnInsert: true },
+        );
+
+        const currentProfile = await ProfileModel.findOne({ guildId, userId });
+        migrateLegacyCardInstances(currentProfile);
+        const packCount = Number(currentProfile?.cardPacks?.[packType]) || 0;
+        if (packCount < 1) return { status: 'empty' };
+
+        const cardTotal = getCardTotal(currentProfile);
+        const capacity = Number(currentProfile?.cardInventory?.capacity) || 20;
+        if (cardTotal + COLLECTIBLE_CARDS_PER_PACK > capacity) {
+            return {
+                status: 'full', cardTotal, capacity, requiredSlots: COLLECTIBLE_CARDS_PER_PACK,
+            };
+        }
+
+        const boosterUsed = (Number(currentProfile?.cardInventory?.rarityBoosters) || 0) > 0;
+        const rewards = Array.from({ length: COLLECTIBLE_CARDS_PER_PACK }, (_, index) => {
+            const boosted = boosterUsed && index === 0;
+            const card = drawCard(packType, undefined, boosted ? 1 : 0);
+            const instance = createCardInstance(card);
+            addCardInstance(currentProfile, instance);
+            return { card, instance, boosted };
+        });
+        currentProfile.cardPacks[packType] -= 1;
+        if (boosterUsed) currentProfile.cardInventory.rarityBoosters -= 1;
+        await currentProfile.save();
+
+        return {
+            status: 'opened',
+            rewards,
+            card: rewards[0].card,
+            instance: rewards[0].instance,
+            profile: currentProfile,
+            boosterUsed,
+        };
+    });
+}
+
+function buildOwnerFooter(user, position) {
+    const name = user?.displayName || user?.globalName || user?.username || 'Aventureiro';
+    const footer = { text: `Pertence a ${name} • ${position}/3` };
+    const avatar = user?.displayAvatarURL?.({ size: 64 });
+    if (avatar) footer.iconURL = avatar;
+    return footer;
+}
+
+function buildCollectibleReveal(reward, position, user = null) {
+    const { card, instance, boosted } = reward;
+    const condition = getFloatCondition(instance.float);
+    const value = getCardValue(card, instance.float);
+    const embed = new EmbedBuilder()
+        .setColor(RARITY_COLORS[card.rarity])
+        .setTitle(`${card.emoji} ${card.name}`)
+        .setDescription([
+            `*${card.type} • ${card.rarity}*`,
+            `🔬 Float · **${formatFloat(instance.float)}**`,
+            `${condition.emoji} ${condition.name}`,
+            `🪙 Valor · **${value.toLocaleString('pt-BR')}**`,
+            `🏷️ Série · \`${instance.uid.slice(0, 8).toUpperCase()}\``,
+            boosted ? '✨ Booster aplicado' : '',
+        ].filter(Boolean).join('\n'))
+        .setFooter(buildOwnerFooter(user, position));
+    const artwork = getCardArtwork(card);
+    if (!artwork) return { embed, file: null };
+
+    const attachmentName = `revelacao-${position}-${artwork.name}`;
+    embed.setImage(`attachment://${attachmentName}`);
+    return {
+        embed,
+        file: new AttachmentBuilder(artwork.attachment, { name: attachmentName }),
+    };
+}
+
+function buildJokerReveal(remaining, cardTotal, capacity, user = null) {
+    const attachmentName = 'joker-gideon.png';
+    const embed = new EmbedBuilder()
+        .setColor(0xC9A227)
+        .setTitle('🃏 Coringa do Gideon')
+        .setDescription([
+            '*Carta cerimonial*',
+            '**Não entra no inventário.**',
+            '',
+            `📦 Pacotes · **${remaining}**`,
+            `🎒 Espaços · **${cardTotal}/${capacity}**`,
+        ].join('\n'))
+        .setImage(`attachment://${attachmentName}`)
+        .setFooter(buildOwnerFooter(user, 3));
+    return {
+        embed,
+        file: new AttachmentBuilder(JOKER_ARTWORK, { name: attachmentName }),
+    };
+}
+
+function buildCarouselControls(position, locked = false) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('card_pack_previous')
+            .setEmoji('◀️')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(locked || position === 0),
+        new ButtonBuilder()
+            .setCustomId('card_pack_next')
+            .setEmoji('▶️')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(locked || position === 2),
+    );
+}
+
+function slidePayload(slide, position, locked = false) {
+    return {
+        embeds: [slide.embed],
+        components: [buildCarouselControls(position, locked)],
+        files: slide.file ? [slide.file] : [],
+        attachments: [],
+    };
+}
+
+module.exports = {
+    data: new SlashCommandBuilder()
+        .setName('pack')
+        .setDescription('Abra duas cartas colecionáveis e o Coringa do Gideon.')
+        .addStringOption((option) => option
+            .setName('pacote')
+            .setDescription('Tipo de pacote que deseja abrir.')
+            .addChoices(
+                { name: '📦 Pacote Básico', value: 'basic' },
+                { name: '🔮 Pacote Arcano', value: 'arcane' },
+            )
+            .setRequired(true))
+        .setDMPermission(false),
+
+    async execute(interaction) {
+        const packType = interaction.options.getString('pacote', true);
+        const result = await openPack(
+            interaction.guildId,
+            interaction.user.id,
+            interaction.user.username,
+            packType,
+        );
+
+        if (result.status === 'empty') {
+            return interaction.reply({
+                content: `❌ Você não possui nenhum **${PACK_NAMES[packType]}**.`,
+                flags: 64,
+            });
+        }
+        if (result.status === 'full') {
+            return interaction.reply({
+                content: [
+                    `🎒 Você precisa de **${result.requiredSlots} espaços livres** para abrir o pacote`,
+                    `(**${result.cardTotal}/${result.capacity}**).`,
+                    'Compre uma **Bolsa de Cartas** no /mercador.',
+                ].join(' '),
+                flags: 64,
+            });
+        }
+
+        const remaining = result.profile.cardPacks?.[packType] || 0;
+        const cardTotal = getCardTotal(result.profile);
+        const capacity = Number(result.profile.cardInventory?.capacity) || 20;
+        const collectibleReveals = result.rewards.map(
+            (reward, index) => buildCollectibleReveal(reward, index + 1, interaction.user),
+        );
+        const jokerReveal = buildJokerReveal(
+            remaining,
+            cardTotal,
+            capacity,
+            interaction.user,
+        );
+        const slides = [...collectibleReveals, jokerReveal];
+        let position = 0;
+        await interaction.reply(slidePayload(slides[position], position));
+        const message = await interaction.fetchReply();
+        const collector = message.createMessageComponentCollector({ time: 180_000 });
+
+        collector.on('collect', async (componentInteraction) => {
+            if (componentInteraction.user.id !== interaction.user.id) {
+                await componentInteraction.reply({
+                    content: '❌ Somente quem abriu o pacote pode navegar por estas cartas.',
+                    flags: 64,
+                });
+                return;
+            }
+            position += componentInteraction.customId === 'card_pack_next' ? 1 : -1;
+            position = Math.max(0, Math.min(slides.length - 1, position));
+            try {
+                await componentInteraction.update(slidePayload(slides[position], position));
+            } catch (error) {
+                if (error?.code !== 10008) console.error('Erro ao navegar pelo pacote:', error);
+            }
+        });
+
+        collector.on('end', async () => {
+            await interaction.editReply({
+                components: [buildCarouselControls(position, true)],
+            }).catch(() => {});
+        });
+
+        return undefined;
+    },
+
+    openPack,
+    buildCollectibleReveal,
+    buildCarouselControls,
+    buildJokerReveal,
+    slidePayload,
+};

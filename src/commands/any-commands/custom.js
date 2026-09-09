@@ -239,18 +239,23 @@ async function saveProfileAppearance(profile) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('customizar')
-        .setDescription('Personalize sua ficha de aventureiro.'),
+        .setDescription('Personalize sua ficha de aventureiro.')
+        .setDMPermission(false),
 
     async execute(interaction) {
         const userId = interaction.user.id;
+        const { guildId } = interaction;
         let collector;
 
         try {
-            let profile = await getProfile(userId);
+            let profile = await getProfile(guildId, userId);
             if (!profile) {
                 profile = await Profile.findOneAndUpdate(
-                    { userId },
-                    { $set: { username: interaction.user.username }, $setOnInsert: { userId } },
+                    { guildId, userId },
+                    {
+                        $set: { username: interaction.user.username },
+                        $setOnInsert: { guildId, userId },
+                    },
                     { new: true, upsert: true, setDefaultsOnInsert: true },
                 );
             }

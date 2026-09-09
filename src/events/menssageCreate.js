@@ -23,8 +23,10 @@ module.exports = {
             }
         }
 
+        if (!message.guildId) return;
+
         try {
-            const profile = await addInteraction(message.author.id, message.author.username);
+            const profile = await addInteraction(message.guildId, message.author.id, message.author.username);
             const { newEmblems, newRewards } = await checkEmblems(profile);
 
             if (newEmblems.length > 0 || newRewards.length > 0) {

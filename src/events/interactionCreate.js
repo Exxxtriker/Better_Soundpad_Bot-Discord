@@ -5,12 +5,23 @@ const { addInteraction, checkEmblems } = require('../utils/profileManager');
 module.exports = {
     name: Events.InteractionCreate,
     async execute(interaction, dependencies = { addInteraction, checkEmblems }) {
-        if (interaction.isAutocomplete?.()) return;
+        if (interaction.isAutocomplete?.()) {
+            const autocompleteCommand = interaction.client.commands.get(interaction.commandName);
+            if (typeof autocompleteCommand?.autocomplete === 'function') {
+                await autocompleteCommand.autocomplete(interaction).catch(async (error) => {
+                    console.error(`Erro no autocomplete de /${interaction.commandName}:`, error);
+                    await interaction.respond([]).catch(() => {});
+                });
+            }
+            return;
+        }
         const { user } = interaction;
+        const { guildId } = interaction;
 
         const grantProgress = async (checkUnlocks) => {
+            if (!guildId) return { newEmblems: [], newRewards: [] };
             try {
-                const profile = await dependencies.addInteraction(user.id, user.username);
+                const profile = await dependencies.addInteraction(guildId, user.id, user.username);
                 return checkUnlocks
                     ? await dependencies.checkEmblems(profile)
                     : { newEmblems: [], newRewards: [] };

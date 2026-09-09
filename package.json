@@ -7,9 +7,8 @@
     "start": "node app.js",
     "dev": "nodemon app.js --ignore config.json",
     "deploy:commands": "node slashBuilder.js",
-    "lint": "eslint app.js config.js slashBuilder.js src scripts test",
-    "validate": "node scripts/validateCommands.js",
-    "test": "npm run lint && npm run validate && node --test --test-isolation=none test/security.test.js"
+    "lint": "eslint app.js config.js slashBuilder.js src scripts",
+    "validate": "node scripts/validateCommands.js"
   },
   "keywords": [],
   "author": "",

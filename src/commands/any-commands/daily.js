@@ -8,11 +8,13 @@ const DAILY_MAX = 1000; // máximo de ouro
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('daily')
-        .setDescription('Receba sua recompensa diária de ouro 💰'),
+        .setDescription('Receba sua recompensa diária de ouro 💰')
+        .setDMPermission(false),
 
     async execute(interaction) {
         try {
             const userId = interaction.user.id;
+            const { guildId } = interaction;
             const { username } = interaction.user;
 
             const now = new Date();
@@ -20,13 +22,14 @@ module.exports = {
             const reward = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
 
             await Profile.updateOne(
-                { userId },
-                { $set: { username }, $setOnInsert: { userId } },
+                { guildId, userId },
+                { $set: { username }, $setOnInsert: { guildId, userId } },
                 { upsert: true, setDefaultsOnInsert: true },
             );
 
             const profile = await Profile.findOneAndUpdate(
                 {
+                    guildId,
                     userId,
                     $or: [
                         { lastDaily: null },
@@ -41,7 +44,7 @@ module.exports = {
             );
 
             if (!profile) {
-                const existingProfile = await Profile.findOne({ userId });
+                const existingProfile = await Profile.findOne({ guildId, userId });
                 const remaining = Math.max(0, DAILY_COOLDOWN - (now - existingProfile.lastDaily));
                 const hours = Math.floor(remaining / (1000 * 60 * 60));
                 const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));

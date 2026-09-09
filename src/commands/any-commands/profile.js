@@ -1,5 +1,11 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { getProfile } = require('../../utils/profileManager');
+const {
+    CARD_CATALOG,
+    getCardTotal,
+    getCollectionValue,
+    getOwnedCards,
+} = require('../../utils/cardCatalog');
 
 const DEFAULT_PROFILE_COLOR = '#8B1E2D';
 const DEFAULT_CREST = '⚔️';
@@ -102,6 +108,16 @@ function listItems(items, fallback, maxLength = 1024) {
 
 function buildProfileEmbed(user, rawProfile, clientUser) {
     const profile = normalizeProfile(rawProfile);
+    const cardTotal = getCardTotal(rawProfile);
+    const uniqueCards = getOwnedCards(rawProfile).length;
+    const collectionValue = getCollectionValue(rawProfile);
+    const cardCapacity = Math.max(20, Number(rawProfile?.cardInventory?.capacity) || 20);
+    const organizerLevel = Math.max(0, Number(rawProfile?.cardInventory?.organizerLevel) || 0);
+    const basicPacks = Math.max(0, Number(rawProfile?.cardPacks?.basic) || 0);
+    const arcanePacks = Math.max(0, Number(rawProfile?.cardPacks?.arcane) || 0);
+    const rarityBoosters = Math.max(0, Number(rawProfile?.cardInventory?.rarityBoosters) || 0);
+    const weddingRings = Math.max(0, Number(rawProfile?.cardInventory?.weddingRings) || 0);
+    const descriptionScrolls = Math.max(0, Number(rawProfile?.cardInventory?.descriptionScrolls) || 0);
     const displayName = escapeDisplayText(
         user.displayName || user.globalName || user.username,
         80,
@@ -142,6 +158,51 @@ function buildProfileEmbed(user, rawProfile, clientUser) {
                 inline: false,
             },
             {
+                name: '📖 Descobertas',
+                value: `**${uniqueCards}/${CARD_CATALOG.length}** cartas`,
+                inline: true,
+            },
+            {
+                name: '🃏 Cartas',
+                value: `**${cardTotal}** no códice`,
+                inline: true,
+            },
+            {
+                name: '🪙 Coleção',
+                value: `**${numberFormatter.format(collectionValue)}** moedas`,
+                inline: true,
+            },
+            {
+                name: '🎒 Espaços',
+                value: `**${cardTotal}/${cardCapacity}** ocupados`,
+                inline: true,
+            },
+            {
+                name: '📦 Pacotes',
+                value: `**${basicPacks}B / ${arcanePacks}A**`,
+                inline: true,
+            },
+            {
+                name: '🗂️ Organizador',
+                value: `**Nível ${organizerLevel}/3**`,
+                inline: true,
+            },
+            {
+                name: '✨ Boosters',
+                value: `**${rarityBoosters}** guardados`,
+                inline: true,
+            },
+            {
+                name: '💍 Anéis',
+                value: `**${weddingRings}** guardados`,
+                inline: true,
+            },
+            {
+                name: '📝 Pergaminhos',
+                value: `**${descriptionScrolls}** guardados`,
+                inline: true,
+            },
+            {
                 name: '🏵️ Brasões conquistados',
                 value: listItems(profile.emblems, 'Nenhum brasão conquistado até agora.'),
                 inline: false,
@@ -167,7 +228,8 @@ function buildProfileEmbed(user, rawProfile, clientUser) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('perfil')
-        .setDescription('Exibe sua ficha de aventureiro.'),
+        .setDescription('Exibe sua ficha de aventureiro.')
+        .setDMPermission(false),
 
     async execute(interaction) {
         try {
@@ -175,7 +237,7 @@ module.exports = {
                 await interaction.deferReply();
             }
 
-            const profile = await getProfile(interaction.user.id);
+            const profile = await getProfile(interaction.guildId, interaction.user.id);
 
             if (!profile) {
                 await interaction.editReply({
