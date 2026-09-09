@@ -53,6 +53,8 @@ function buildSalePreview(user, card, instance) {
         .setTitle(`${card.emoji} ${card.name}`)
         .setDescription([
             `*${card.type} • ${card.rarity}*`,
+            card.circle ? `🔮 **${card.circle}º círculo** · ${card.school}` : '',
+            card.circle ? `📖 ${card.tradition} · **${card.manaCost} PM**` : '',
             `🔬 Float · **${formatFloat(instance.float)}**`,
             `${state.emoji} Estado · **${state.name}**`,
             `🏷️ Série · \`${instance.uid.slice(0, 8).toUpperCase()}\``,
@@ -60,7 +62,7 @@ function buildSalePreview(user, card, instance) {
             `🪙 Oferta · **${moneyFormatter.format(value)} moedas**`,
             '',
             '⚠️ Ao confirmar, esta cópia será removida permanentemente do seu álbum.',
-        ].join('\n'))
+        ].filter(Boolean).join('\n'))
         .setFooter({ text: `Oferta reservada para ${user.displayName || user.username}` });
     const artwork = getCardArtwork(card);
     if (!artwork) return { embed, files: [], value };
@@ -81,13 +83,15 @@ function buildSaleResult(user, result) {
         .setTitle(`🪙 ${result.card.name} foi vendida`)
         .setDescription([
             `*${result.card.type} • ${result.card.rarity}*`,
+            result.card.circle ? `🔮 **${result.card.circle}º círculo** · ${result.card.school}` : '',
+            result.card.circle ? `📖 ${result.card.tradition} · **${result.card.manaCost} PM**` : '',
             `🔬 Float · **${formatFloat(result.instance.float)}**`,
             `${state.emoji} Estado · **${state.name}**`,
             `🏷️ Série · \`${result.instance.uid.slice(0, 8).toUpperCase()}\``,
             '',
             `💰 Recebido · **${moneyFormatter.format(result.value)} moedas**`,
             `🎒 Novo saldo · **${moneyFormatter.format(result.balance)} moedas**`,
-        ].join('\n'))
+        ].filter(Boolean).join('\n'))
         .setFooter({ text: `Venda concluída por ${user.displayName || user.username}` })
         .setTimestamp();
 }

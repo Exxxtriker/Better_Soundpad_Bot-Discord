@@ -115,6 +115,7 @@ function buildProfileEmbed(user, rawProfile, clientUser) {
     const organizerLevel = Math.max(0, Number(rawProfile?.cardInventory?.organizerLevel) || 0);
     const basicPacks = Math.max(0, Number(rawProfile?.cardPacks?.basic) || 0);
     const arcanePacks = Math.max(0, Number(rawProfile?.cardPacks?.arcane) || 0);
+    const grimoirePacks = Math.max(0, Number(rawProfile?.cardPacks?.grimoire) || 0);
     const rarityBoosters = Math.max(0, Number(rawProfile?.cardInventory?.rarityBoosters) || 0);
     const weddingRings = Math.max(0, Number(rawProfile?.cardInventory?.weddingRings) || 0);
     const descriptionScrolls = Math.max(0, Number(rawProfile?.cardInventory?.descriptionScrolls) || 0);
@@ -179,7 +180,7 @@ function buildProfileEmbed(user, rawProfile, clientUser) {
             },
             {
                 name: '📦 Pacotes',
-                value: `**${basicPacks}B / ${arcanePacks}A**`,
+                value: `**${basicPacks}B / ${arcanePacks}A / ${grimoirePacks}G**`,
                 inline: true,
             },
             {

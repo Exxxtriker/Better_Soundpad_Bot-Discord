@@ -14,6 +14,8 @@ const {
     getCardArtwork,
     getCardValue,
     getCardsByRarity,
+    getPackSpellChance,
+    isSpellCard,
 } = require('../../utils/cardCatalog');
 
 const BASIC_RARITY_CHANCES = {
@@ -32,6 +34,14 @@ const ARCANE_RARITY_CHANCES = {
     Lendário: 21,
     Mítico: 4,
 };
+const GRIMOIRE_RARITY_CHANCES = {
+    Comum: 35,
+    Incomum: 25,
+    Raro: 20,
+    Épico: 12,
+    Lendário: 6,
+    Mítico: 2,
+};
 const CATEGORY_CHOICES = [
     ['Classes', 'Classe'],
     ['Raças', 'Raça'],
@@ -41,6 +51,7 @@ const CATEGORY_CHOICES = [
     ['Divindades esquecidas', 'Divindade Esquecida'],
     ['Deuses menores', 'Deus Menor'],
     ['Lendas de Arton', 'Lenda de Arton'],
+    ['Magias de Arton', 'Magia de Arton'],
 ];
 const moneyFormatter = new Intl.NumberFormat('pt-BR');
 const percentFormatter = new Intl.NumberFormat('pt-BR', {
@@ -55,11 +66,24 @@ function getCatalogCards(category = null, rarity = null) {
     ));
 }
 
-function formatCardChance(card, rarityChances) {
+function formatCardChance(card, rarityChances, packType = 'basic') {
     const rarityChance = rarityChances[card.rarity] || 0;
-    const cardsInRarity = getCardsByRarity(card.rarity).length;
-    if (rarityChance <= 0 || cardsInRarity <= 0) return '—';
-    const exactChance = rarityChance / cardsInRarity;
+    const spellChance = getPackSpellChance(packType, card.rarity);
+    const categoryChance = isSpellCard(card) ? spellChance : 100 - spellChance;
+    const cardsInKind = getCardsByRarity(card.rarity, packType)
+        .filter((candidate) => isSpellCard(candidate) === isSpellCard(card));
+    const categoriesInKind = new Set(cardsInKind.map((candidate) => candidate.type)).size;
+    const cardsInCategory = cardsInKind
+        .filter((candidate) => candidate.type === card.type)
+        .length;
+    if (
+        rarityChance <= 0
+        || categoryChance <= 0
+        || categoriesInKind <= 0
+        || cardsInCategory <= 0
+    ) return '—';
+    const categoryCardCount = categoriesInKind * cardsInCategory;
+    const exactChance = (rarityChance * categoryChance) / (100 * categoryCardCount);
     return `${percentFormatter.format(exactChance)}%`;
 }
 
@@ -72,12 +96,15 @@ function buildCodexSlide(card, position, total, filterLabel = 'Códice completo'
         .setTitle(`${card.emoji} ${card.name}`)
         .setDescription([
             `*${card.type} • ${card.rarity}*`,
+            card.circle ? `🔮 **${card.circle}º círculo** · ${card.school}` : '',
+            card.circle ? `📖 ${card.tradition} · **${card.manaCost} PM**` : '',
             '',
             '🔬 Float · **Único**',
             `🪙 Valor · **${moneyFormatter.format(minimumValue)}–${moneyFormatter.format(maximumValue)}**`,
-            `📦 Básico · **${formatCardChance(card, BASIC_RARITY_CHANCES)}**`,
-            `🔮 Arcano · **${formatCardChance(card, ARCANE_RARITY_CHANCES)}**`,
-        ].join('\n'))
+            `📦 Básico · **${formatCardChance(card, BASIC_RARITY_CHANCES, 'basic')}**`,
+            `🔮 Arcano · **${formatCardChance(card, ARCANE_RARITY_CHANCES, 'arcane')}**`,
+            `📕 Grimório · **${formatCardChance(card, GRIMOIRE_RARITY_CHANCES, 'grimoire')}**`,
+        ].filter(Boolean).join('\n'))
         .setFooter({ text: `${position + 1}/${total} • ${filterLabel}` });
     const artwork = getCardArtwork(card);
     if (!artwork) return { embed, file: null };
@@ -150,6 +177,7 @@ module.exports = {
 
     ARCANE_RARITY_CHANCES,
     BASIC_RARITY_CHANCES,
+    GRIMOIRE_RARITY_CHANCES,
     buildCodexSlide,
     buildNavigation: buildCarouselControls,
     formatCardChance,

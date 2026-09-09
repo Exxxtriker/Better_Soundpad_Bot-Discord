@@ -75,6 +75,8 @@ function createCardEmbed(user, profile, card, notice = '', requestedInstance = n
         .setDescription([
             notice,
             `*${card.type} • ${card.rarity}*`,
+            card.circle ? `🔮 **${card.circle}º círculo** · ${card.school}` : '',
+            card.circle ? `📖 ${card.tradition} · **${card.manaCost} PM**` : '',
             `🔬 Float · **${instance ? formatFloat(instance.float) : '—'}**`,
             condition ? `${condition.emoji} Estado · **${condition.name}**` : '',
             `🪙 Valor · **${estimatedValue.toLocaleString('pt-BR')}**`,

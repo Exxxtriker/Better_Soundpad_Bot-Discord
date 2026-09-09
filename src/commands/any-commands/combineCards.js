@@ -203,6 +203,8 @@ module.exports = {
                     (instance) => formatFloat(instance.float),
                 ).join(' + ')}**`,
                 `*${result.resultCard.type} • ${result.resultCard.rarity}*`,
+                result.resultCard.circle ? `🔮 **${result.resultCard.circle}º círculo** · ${result.resultCard.school}` : '',
+                result.resultCard.circle ? `📖 ${result.resultCard.tradition} · **${result.resultCard.manaCost} PM**` : '',
                 `🔬 Float · **${formatFloat(result.resultInstance.float)}**`,
                 `${condition.emoji} Estado · **${condition.name}**`,
                 `🪙 Valor · **${value.toLocaleString('pt-BR')}**`,
@@ -210,7 +212,7 @@ module.exports = {
                 result.mythicalReroll
                     ? '🎲 Evolução · **Raridade máxima**'
                     : `🎲 Evolução · **${result.chance}%**`,
-            ].join('\n'))
+            ].filter(Boolean).join('\n'))
             .setFooter(footer);
         const artwork = getCardArtwork(result.resultCard);
         const files = [];

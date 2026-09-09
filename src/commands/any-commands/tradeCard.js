@@ -108,11 +108,13 @@ function formatTradeInstance(card, instance) {
     return [
         `${card.emoji} **${card.name}**`,
         `*${card.type} • ${card.rarity}*`,
+        card.circle ? `🔮 **${card.circle}º círculo** · ${card.school}` : '',
+        card.circle ? `📖 ${card.tradition} · **${card.manaCost} PM**` : '',
         `🔬 Float · **${formatFloat(instance.float)}**`,
         `${condition.emoji} Estado · **${condition.name}**`,
         `🪙 Valor · **${value.toLocaleString('pt-BR')}**`,
         `🏷️ Série · \`${instance.uid.slice(0, 8).toUpperCase()}\``,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 }
 
 function buildTradeEmbed(

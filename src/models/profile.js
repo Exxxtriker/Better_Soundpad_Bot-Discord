@@ -23,6 +23,7 @@ const profileSchema = new mongoose.Schema({
     cardPacks: {
         basic: { type: Number, default: 3, min: 0 },
         arcane: { type: Number, default: 0, min: 0 },
+        grimoire: { type: Number, default: 0, min: 0 },
     },
     cards: {
         type: Map,

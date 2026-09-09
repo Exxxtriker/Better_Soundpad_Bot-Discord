@@ -213,7 +213,7 @@ const CARD_ITEMS = [
         rarity: 'Comum',
         price: 650,
         effect: 1,
-        description: 'Contém duas cartas colecionáveis e o Coringa cerimonial do Gideon.',
+        description: 'Duas cartas e o Coringa; magia: 12% a 40%, conforme a raridade.',
     },
     {
         id: 'arcane_card_pack',
@@ -223,7 +223,17 @@ const CARD_ITEMS = [
         rarity: 'Lendário',
         price: 1800,
         effect: 1,
-        description: 'Contém duas cartas raras ou superiores e o Coringa cerimonial do Gideon.',
+        description: 'Duas cartas Raras ou superiores e o Coringa; magia: 28% a 55%, conforme a raridade.',
+    },
+    {
+        id: 'grimoire_card_pack',
+        type: 'pack_grimoire',
+        emoji: '📕',
+        name: 'Pacote de Grimório',
+        rarity: 'Raro',
+        price: 1250,
+        effect: 1,
+        description: 'Contém duas cartas de magia de Tormenta20 garantidas e o Coringa cerimonial do Gideon.',
     },
     {
         id: 'card_organizer',
@@ -379,6 +389,7 @@ function getEffectLabel(item) {
     if (item.type === 'points') return `+${moneyFormatter.format(item.effect)} de renome`;
     if (item.type === 'pack_basic') return '+1 pacote de cartas básico';
     if (item.type === 'pack_arcane') return '+1 pacote de cartas arcano';
+    if (item.type === 'pack_grimoire') return '+1 pacote de grimório';
     if (item.type === 'card_organizer') return '+1 nível de organização do álbum';
     if (item.type === 'rarity_booster') return 'próxima carta recebe +1 raridade';
     if (item.type === 'description_scroll') return '+1 alteração de descrição';

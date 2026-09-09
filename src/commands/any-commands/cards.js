@@ -102,7 +102,7 @@ function slidePayload(slide, position, total) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('cartas')
-        .setDescription('Exibe uma coleção de cartas de classes, raças e terrenos.')
+        .setDescription('Exibe todas as cartas da coleção de um aventureiro.')
         .addUserOption((option) => option
             .setName('jogador')
             .setDescription('Jogador cuja coleção deseja examinar.'))

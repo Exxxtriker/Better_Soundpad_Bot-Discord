@@ -27,6 +27,7 @@ const { withProfileLock } = require('../../utils/profileManager');
 const PACK_NAMES = {
     basic: 'Pacote Básico',
     arcane: 'Pacote Arcano',
+    grimoire: 'Pacote de Grimório',
 };
 const COLLECTIBLE_CARDS_PER_PACK = 2;
 const JOKER_ARTWORK = path.join(__dirname, '..', '..', 'assets', 'cards', 'joker_gideon.png');
@@ -95,6 +96,8 @@ function buildCollectibleReveal(reward, position, user = null) {
         .setTitle(`${card.emoji} ${card.name}`)
         .setDescription([
             `*${card.type} • ${card.rarity}*`,
+            card.circle ? `🔮 **${card.circle}º círculo** · ${card.school}` : '',
+            card.circle ? `📖 ${card.tradition} · **${card.manaCost} PM**` : '',
             `🔬 Float · **${formatFloat(instance.float)}**`,
             `${condition.emoji} Estado · **${condition.name}**`,
             `🪙 Valor · **${value.toLocaleString('pt-BR')}**`,
@@ -153,6 +156,7 @@ module.exports = {
             .addChoices(
                 { name: '📦 Pacote Básico', value: 'basic' },
                 { name: '🔮 Pacote Arcano', value: 'arcane' },
+                { name: '📕 Pacote de Grimório', value: 'grimoire' },
             )
             .setRequired(true))
         .setDMPermission(false),

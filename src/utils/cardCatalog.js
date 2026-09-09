@@ -35,6 +35,48 @@ const FLOAT_CONDITIONS = [
     { maximum: 1.000001, name: 'Marcada por Batalhas', emoji: '🩸' },
 ];
 const FLOAT_PRECISION = 1_000_000;
+const SPELL_CARD_TYPE = 'Magia de Arton';
+const SPELL_MANA_COSTS = [0, 1, 3, 6, 10, 15];
+const PACK_SPELL_CHANCES = {
+    basic: {
+        Comum: 12,
+        Incomum: 14,
+        Raro: 18,
+        Épico: 23,
+        Lendário: 30,
+        Mítico: 40,
+    },
+    arcane: {
+        Comum: 0,
+        Incomum: 0,
+        Raro: 28,
+        Épico: 38,
+        Lendário: 45,
+        Mítico: 55,
+    },
+    grimoire: {
+        Comum: 100,
+        Incomum: 100,
+        Raro: 100,
+        Épico: 100,
+        Lendário: 100,
+        Mítico: 100,
+    },
+};
+
+function defineSpellCard(id, name, emoji, rarity, circle, school, tradition) {
+    return {
+        id,
+        type: SPELL_CARD_TYPE,
+        name,
+        emoji,
+        rarity,
+        circle,
+        school,
+        tradition,
+        manaCost: SPELL_MANA_COSTS[circle],
+    };
+}
 
 const CARD_ARTWORK = {
     class_warrior: 'class_warrior.png',
@@ -119,6 +161,31 @@ const CARD_ARTWORK = {
     tormenta_legend_sandro_galtran: 'tormenta_legend_sandro_galtran.png',
     tormenta_legend_niele: 'tormenta_legend_niele.png',
     tormenta_legend_tork: 'tormenta_legend_tork.png',
+    tormenta_spell_curar_ferimentos: 'tormenta_spell_curar_ferimentos.png',
+    tormenta_spell_seta_infalivel_de_talude: 'tormenta_spell_seta_infalivel_de_talude.png',
+    tormenta_spell_armadura_arcana: 'tormenta_spell_armadura_arcana.png',
+    tormenta_spell_conjurar_monstro: 'tormenta_spell_conjurar_monstro.png',
+    tormenta_spell_sono: 'tormenta_spell_sono.png',
+    tormenta_spell_bola_de_fogo: 'tormenta_spell_bola_de_fogo.png',
+    tormenta_spell_dissipar_magia: 'tormenta_spell_dissipar_magia.png',
+    tormenta_spell_relampago: 'tormenta_spell_relampago.png',
+    tormenta_spell_velocidade: 'tormenta_spell_velocidade.png',
+    tormenta_spell_oracao: 'tormenta_spell_oracao.png',
+    tormenta_spell_teletransporte: 'tormenta_spell_teletransporte.png',
+    tormenta_spell_voo: 'tormenta_spell_voo.png',
+    tormenta_spell_servo_morto_vivo: 'tormenta_spell_servo_morto_vivo.png',
+    tormenta_spell_transformacao_de_guerra: 'tormenta_spell_transformacao_de_guerra.png',
+    tormenta_spell_enxame_rubro_de_ichabod: 'tormenta_spell_enxame_rubro_de_ichabod.png',
+    tormenta_spell_desintegrar: 'tormenta_spell_desintegrar.png',
+    tormenta_spell_campo_antimagia: 'tormenta_spell_campo_antimagia.png',
+    tormenta_spell_guardiao_divino: 'tormenta_spell_guardiao_divino.png',
+    tormenta_spell_terremoto: 'tormenta_spell_terremoto.png',
+    tormenta_spell_mao_poderosa_de_talude: 'tormenta_spell_mao_poderosa_de_talude.png',
+    tormenta_spell_desejo: 'tormenta_spell_desejo.png',
+    tormenta_spell_buraco_negro: 'tormenta_spell_buraco_negro.png',
+    tormenta_spell_chuva_de_meteoros: 'tormenta_spell_chuva_de_meteoros.png',
+    tormenta_spell_intervencao_divina: 'tormenta_spell_intervencao_divina.png',
+    tormenta_spell_mata_dragao: 'tormenta_spell_mata_dragao.png',
 };
 
 const CARD_CATALOG = [
@@ -368,6 +435,231 @@ const CARD_CATALOG = [
     {
         id: 'tormenta_legend_tork', type: 'Lenda de Arton', name: 'Tork', emoji: '⚒️', rarity: 'Épico',
     },
+    defineSpellCard(
+        'tormenta_spell_curar_ferimentos',
+        'Curar Ferimentos',
+        '💚',
+        'Comum',
+        1,
+        'Evocação',
+        'Divina',
+    ),
+    defineSpellCard(
+        'tormenta_spell_seta_infalivel_de_talude',
+        'Seta Infalível de Talude',
+        '✦',
+        'Incomum',
+        1,
+        'Evocação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_armadura_arcana',
+        'Armadura Arcana',
+        '🛡️',
+        'Comum',
+        1,
+        'Abjuração',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_conjurar_monstro',
+        'Conjurar Monstro',
+        '👹',
+        'Comum',
+        1,
+        'Convocação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_sono',
+        'Sono',
+        '🌙',
+        'Comum',
+        1,
+        'Encantamento',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_bola_de_fogo',
+        'Bola de Fogo',
+        '🔥',
+        'Incomum',
+        2,
+        'Evocação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_dissipar_magia',
+        'Dissipar Magia',
+        '💫',
+        'Incomum',
+        2,
+        'Abjuração',
+        'Universal',
+    ),
+    defineSpellCard(
+        'tormenta_spell_relampago',
+        'Relâmpago',
+        '⚡',
+        'Incomum',
+        2,
+        'Evocação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_velocidade',
+        'Velocidade',
+        '💨',
+        'Incomum',
+        2,
+        'Transmutação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_oracao',
+        'Oração',
+        '🙏',
+        'Incomum',
+        2,
+        'Encantamento',
+        'Divina',
+    ),
+    defineSpellCard(
+        'tormenta_spell_teletransporte',
+        'Teletransporte',
+        '🌀',
+        'Raro',
+        3,
+        'Convocação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_voo',
+        'Voo',
+        '🪽',
+        'Raro',
+        3,
+        'Transmutação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_servo_morto_vivo',
+        'Servo Morto-Vivo',
+        '💀',
+        'Raro',
+        3,
+        'Necromancia',
+        'Universal',
+    ),
+    defineSpellCard(
+        'tormenta_spell_transformacao_de_guerra',
+        'Transformação de Guerra',
+        '⚔️',
+        'Raro',
+        3,
+        'Transmutação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_enxame_rubro_de_ichabod',
+        'Enxame Rubro de Ichabod',
+        '🦂',
+        'Épico',
+        3,
+        'Convocação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_desintegrar',
+        'Desintegrar',
+        '☄️',
+        'Épico',
+        4,
+        'Transmutação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_campo_antimagia',
+        'Campo Antimagia',
+        '🚫',
+        'Épico',
+        4,
+        'Abjuração',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_guardiao_divino',
+        'Guardião Divino',
+        '🌟',
+        'Épico',
+        4,
+        'Convocação',
+        'Divina',
+    ),
+    defineSpellCard(
+        'tormenta_spell_terremoto',
+        'Terremoto',
+        '🌋',
+        'Épico',
+        4,
+        'Evocação',
+        'Divina',
+    ),
+    defineSpellCard(
+        'tormenta_spell_mao_poderosa_de_talude',
+        'Mão Poderosa de Talude',
+        '✋',
+        'Lendário',
+        4,
+        'Convocação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_desejo',
+        'Desejo',
+        '🌠',
+        'Mítico',
+        5,
+        'Transmutação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_buraco_negro',
+        'Buraco Negro',
+        '⚫',
+        'Mítico',
+        5,
+        'Convocação',
+        'Universal',
+    ),
+    defineSpellCard(
+        'tormenta_spell_chuva_de_meteoros',
+        'Chuva de Meteoros',
+        '☄️',
+        'Lendário',
+        5,
+        'Convocação',
+        'Arcana',
+    ),
+    defineSpellCard(
+        'tormenta_spell_intervencao_divina',
+        'Intervenção Divina',
+        '✨',
+        'Mítico',
+        5,
+        'Convocação',
+        'Divina',
+    ),
+    defineSpellCard(
+        'tormenta_spell_mata_dragao',
+        'Mata-Dragão',
+        '🐉',
+        'Mítico',
+        5,
+        'Evocação',
+        'Arcana',
+    ),
 ];
 
 const CARD_BY_ID = new Map(CARD_CATALOG.map((card) => [card.id, card]));
@@ -385,8 +677,23 @@ function getCardArtwork(cardOrId) {
     return getDisplayAttachment(sourceAttachment, filename);
 }
 
-function getCardsByRarity(rarity) {
-    return CARD_CATALOG.filter((card) => card.rarity === rarity);
+function isSpellCard(card) {
+    return card?.type === SPELL_CARD_TYPE;
+}
+
+function getPackCards(packType = 'basic') {
+    if (packType === 'grimoire') return CARD_CATALOG.filter(isSpellCard);
+    return CARD_CATALOG;
+}
+
+function getCardsByRarity(rarity, packType = null) {
+    const cards = packType ? getPackCards(packType) : CARD_CATALOG;
+    return cards.filter((card) => card.rarity === rarity);
+}
+
+function getPackSpellChance(packType, rarity) {
+    const chances = PACK_SPELL_CHANCES[packType] || PACK_SPELL_CHANCES.basic;
+    return chances[rarity] || 0;
 }
 
 function getLegacyCardQuantity(profile, cardId) {
@@ -596,11 +903,20 @@ function pickRandom(items, randomInteger = randomInt) {
     return items[randomInteger(items.length)];
 }
 
+function pickBalancedCard(items, randomInteger = randomInt) {
+    const categories = [...new Set(items.map((card) => card.type))];
+    const category = pickRandom(categories, randomInteger);
+    return pickRandom(
+        items.filter((card) => card.type === category),
+        randomInteger,
+    );
+}
+
 function drawRarity(packType = 'basic', randomInteger = randomInt) {
     const roll = randomInteger(10_000);
-    const thresholds = packType === 'arcane'
-        ? [0, 0, 4_500, 7_500, 9_600, 10_000]
-        : [4_500, 7_500, 9_100, 9_800, 9_980, 10_000];
+    let thresholds = [4_500, 7_500, 9_100, 9_800, 9_980, 10_000];
+    if (packType === 'arcane') thresholds = [0, 0, 4_500, 7_500, 9_600, 10_000];
+    if (packType === 'grimoire') thresholds = [3_500, 6_000, 8_000, 9_200, 9_800, 10_000];
 
     return RARITIES[thresholds.findIndex((threshold) => roll < threshold)];
 }
@@ -612,7 +928,12 @@ function drawCard(packType = 'basic', randomInteger = randomInt, rarityBoost = 0
         RARITIES.indexOf(rolledRarity) + Math.max(0, rarityBoost),
     );
     const rarity = RARITIES[rarityIndex];
-    return pickRandom(getCardsByRarity(rarity), randomInteger);
+    const spellChance = getPackSpellChance(packType, rarity);
+    const drawsSpell = spellChance >= 100
+        || (spellChance > 0 && randomInteger(10_000) < spellChance * 100);
+    const candidates = getCardsByRarity(rarity, packType)
+        .filter((card) => isSpellCard(card) === drawsSpell);
+    return pickBalancedCard(candidates, randomInteger);
 }
 
 function combineCards(card, randomInteger = randomInt) {
@@ -628,7 +949,11 @@ function combineCards(card, randomInteger = randomInt) {
     return {
         chance,
         upgraded,
-        card: pickRandom(getCardsByRarity(resultRarity), randomInteger),
+        card: pickRandom(
+            getCardsByRarity(resultRarity)
+                .filter((candidate) => isSpellCard(candidate) === isSpellCard(card)),
+            randomInteger,
+        ),
     };
 }
 
@@ -637,8 +962,10 @@ module.exports = {
     CARD_CATALOG,
     COMBINE_CHANCES,
     FLOAT_CONDITIONS,
+    PACK_SPELL_CHANCES,
     RARITIES,
     RARITY_COLORS,
+    SPELL_CARD_TYPE,
     addCardInstance,
     combineCards,
     createCardInstance,
@@ -656,8 +983,11 @@ module.exports = {
     getCardsByRarity,
     getCollectionValue,
     getFloatCondition,
+    getPackCards,
     getOwnedCards,
+    getPackSpellChance,
     isCardMarried,
+    isSpellCard,
     migrateLegacyCardInstances,
     removeCardInstances,
     resolveCardInstance,
