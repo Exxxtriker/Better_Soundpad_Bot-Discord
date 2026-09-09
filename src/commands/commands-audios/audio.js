@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const AudioPlayerManager = require('../../handlers/AudioPlayerHandler');
 const activePlayers = require('../../handlers/activePlayers');
+const { getCategoryEmoji } = require('../../utils/audioCatalog');
 const { isMusicActive } = require('../music/play');
 
 module.exports = {
@@ -80,18 +81,25 @@ module.exports = {
 
         // Função para criar embed atualizado
         const createEmbed = () => {
+            const currentCategory = playerManager.selectedCategory || 'Sem áudios';
             const fields = [
-                { name: '💡 Dica', value: 'Use os botões abaixo para escolher o áudio que fará todos dançarem!' },
-                { name: '📝 Dica do Bardo', value: 'Deixe a canção guiar sua aventura, e quem sabe, até inspirar uma nova lenda!' },
+                {
+                    name: '📚 Categoria',
+                    value: `${getCategoryEmoji(currentCategory)} **${currentCategory}**\n${playerManager.getSelectedEntries().length} áudio(s)`,
+                    inline: true,
+                },
                 { name: '🔊 Volume', value: `${Math.round(playerManager.volume * 100)}%`, inline: true },
                 { name: '🔁 Loop', value: playerManager.loopEnabled ? 'Ativado' : 'Desativado', inline: true },
             ];
             if (playerManager.currentAudioName) {
-                fields.push({ name: '🎶 Tocando agora', value: `**${playerManager.currentAudioName}**` });
+                fields.push({
+                    name: '🎶 Tocando agora',
+                    value: `**${playerManager.getDisplayName(playerManager.currentAudioName)}**`,
+                });
             }
             return new EmbedBuilder()
-                .setTitle('🎶 Um Bardo na Casa! Escolha sua melodia!')
-                .setDescription('Saudações, viajante! 🎩✨\nEscolha uma das canções abaixo para embalar nossa aventura. Que a música comece e o espírito se eleve! 🎻🪕')
+                .setTitle('🎶 Repertório do Bardo')
+                .setDescription('Escolha primeiro uma **categoria** e depois o **áudio** que acompanhará a aventura.')
                 .setColor(0x8A2BE2)
                 .setThumbnail('https://img1.picmix.com/output/stamp/normal/2/1/0/5/2725012_1e75a.gif')
                 .addFields(fields)
@@ -103,17 +111,32 @@ module.exports = {
         const createRows = () => {
             const rows = [];
             const totalPages = playerManager.getTotalPages();
-            const start = (playerManager.currentPage - 1) * playerManager.itemsPerPage;
-            const end = start + playerManager.itemsPerPage;
-            const slice = playerManager.audioNames.slice(start, end);
+            const categories = playerManager.getCategories().slice(0, 25);
+            const slice = playerManager.getAudioPage();
+
+            if (categories.length > 0) {
+                const categoryMenu = new StringSelectMenuBuilder()
+                    .setCustomId('audio_category')
+                    .setPlaceholder('Escolha uma categoria')
+                    .addOptions(categories.map((category) => ({
+                        label: category,
+                        value: category,
+                        description: `${playerManager.audioCatalog.get(category).length} áudio(s) disponíveis`,
+                        emoji: getCategoryEmoji(category),
+                        default: category === playerManager.selectedCategory,
+                    })));
+                rows.push(new ActionRowBuilder().addComponents(categoryMenu));
+            }
 
             if (slice.length > 0) {
                 const selectMenu = new StringSelectMenuBuilder()
                     .setCustomId('audio_select')
-                    .setPlaceholder(`Selecione um áudio (página ${playerManager.currentPage}/${totalPages})`)
-                    .addOptions(slice.map((name) => ({
-                        label: name.length > 100 ? `${name.slice(0, 97)}...` : name,
-                        value: name,
+                    .setPlaceholder(`Escolha um áudio • página ${playerManager.currentPage}/${totalPages}`)
+                    .addOptions(slice.map((entry) => ({
+                        label: entry.displayName.length > 100
+                            ? `${entry.displayName.slice(0, 97)}...`
+                            : entry.displayName,
+                        value: entry.audioName,
                         emoji: '🎻',
                     })));
                 rows.push(new ActionRowBuilder().addComponents(selectMenu));

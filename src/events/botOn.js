@@ -1,4 +1,5 @@
 const { ActivityType, Events } = require('discord.js');
+const { syncApplicationCommands } = require('../utils/commandSync');
 
 const activityIntervals = new WeakMap();
 const STARTUP_BANNER = [
@@ -133,6 +134,9 @@ module.exports = {
 
         // Inicializa a primeira atividade imediatamente
         updateActivity();
+
+        // Mantém o Discord igual aos arquivos locais e remove registros antigos de servidor.
+        await syncApplicationCommands(bot);
     },
     canUpdatePresence,
     createStartupBanner,

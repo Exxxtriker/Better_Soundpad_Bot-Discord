@@ -4,52 +4,49 @@ const { addInteraction, checkEmblems } = require('../utils/profileManager');
 
 module.exports = {
     name: Events.InteractionCreate,
-    async execute(interaction) {
-        if (!interaction.isChatInputCommand()) return;
-
+    async execute(interaction, dependencies = { addInteraction, checkEmblems }) {
+        if (interaction.isAutocomplete?.()) return;
         const { user } = interaction;
 
-        // 🔹 Executa o comando original primeiro
-        const command = interaction.client.commands.get(interaction.commandName);
-        if (!command) return;
-
-        try {
-            // Execute o comando primeiro e aguarde sua conclusão
-            await command.execute(interaction);
-
-            // Verifica se a interação ainda é válida antes de prosseguir
-            if (!interaction.isRepliable()) {
-                return; // Interação não é mais válida, não tenta atualizações
-            }
-
-            // Só prossegue com atualizações de perfil se a interação ainda for válida
+        const grantProgress = async (checkUnlocks) => {
             try {
-                // 🔹 Atualiza XP e perfil
-                const profile = await addInteraction(user.id, user.username);
-
-                // 🔹 Checa emblemas e recompensas
-                const { newEmblems, newRewards } = await checkEmblems(profile);
-
-                // 🔹 Envia notificações de conquistas se houver algo novo
-                if (newEmblems.length > 0 || newRewards.length > 0) {
-                    try {
-                        // Tenta enviar como followUp se possível
-                        await interaction.followUp({
-                            content: `${user}, você desbloqueou:\n🏅 Emblemas: ${newEmblems.join(', ') || 'nenhum'}\n🎁 Recompensas: ${newRewards.join(', ') || 'nenhuma'}`,
-                            ephemeral: true,
-                        }).catch(() => { /* Ignora erros de followUp */ });
-                    } catch {
-                        // Ignora erros de notificação de conquistas
-                    }
-                }
+                const profile = await dependencies.addInteraction(user.id, user.username);
+                return checkUnlocks
+                    ? await dependencies.checkEmblems(profile)
+                    : { newEmblems: [], newRewards: [] };
             } catch (profileErr) {
                 console.error('Erro ao atualizar perfil:', profileErr);
-                // Não interrompe o fluxo por erros de perfil
+                return { newEmblems: [], newRewards: [] };
             }
+        };
+
+        if (!interaction.isChatInputCommand()) {
+            await grantProgress(false);
+            return;
+        }
+
+        const command = interaction.client.commands.get(interaction.commandName);
+        if (!command) {
+            await grantProgress(false);
+            return;
+        }
+
+        const awardBeforeCommand = interaction.commandName === 'perfil';
+        let unlocks = { newEmblems: [], newRewards: [] };
+
+        if (awardBeforeCommand) {
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.deferReply({ flags: 0 }).catch((error) => {
+                    console.error('Erro ao preparar o comando /perfil:', error);
+                });
+            }
+            unlocks = await grantProgress(true);
+        }
+
+        try {
+            await command.execute(interaction);
         } catch (err) {
             console.error('Erro ao processar interação:', err);
-
-            // Tenta responder ao erro apenas se ainda não houver resposta
             try {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
@@ -64,6 +61,20 @@ module.exports = {
             } catch (replyErr) {
                 console.error('Erro ao tentar responder após falha:', replyErr);
             }
+        } finally {
+            if (!awardBeforeCommand) unlocks = await grantProgress(true);
+        }
+
+        const { newEmblems, newRewards } = unlocks;
+        if (!interaction.isRepliable() || (newEmblems.length === 0 && newRewards.length === 0)) return;
+        const notification = {
+            content: `${user}, você desbloqueou:\n🏅 Emblemas: ${newEmblems.join(', ') || 'nenhum'}\n🎁 Recompensas: ${newRewards.join(', ') || 'nenhuma'}`,
+            flags: 64,
+        };
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(notification).catch(() => {});
+        } else {
+            await interaction.reply(notification).catch(() => {});
         }
     },
 };

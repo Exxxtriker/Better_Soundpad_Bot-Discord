@@ -14,7 +14,7 @@ const AUDIO_BUTTONS = new Set([
 
 module.exports = async (interaction) => {
     const isAudioMenu = interaction.isStringSelectMenu()
-        && interaction.customId === 'audio_select';
+        && ['audio_category', 'audio_select'].includes(interaction.customId);
     const isAudioButton = interaction.isButton() && AUDIO_BUTTONS.has(interaction.customId);
     if (!isAudioMenu && !isAudioButton) return;
     if (!interaction.inGuild()) return;
@@ -36,7 +36,11 @@ module.exports = async (interaction) => {
     await interaction.deferUpdate();
 
     if (isAudioMenu) {
-        playerManager.playAudio(interaction.values[0]);
+        if (interaction.customId === 'audio_category') {
+            playerManager.selectCategory(interaction.values[0]);
+        } else {
+            playerManager.playAudio(interaction.values[0]);
+        }
         await playerManager.updateMessage?.();
         return;
     }

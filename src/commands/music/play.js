@@ -7,8 +7,6 @@ const {
     AudioPlayerStatus, VoiceConnectionStatus, entersState, StreamType,
 } = require('@discordjs/voice');
 const { SpotifyPlugin } = require('@distube/spotify');
-const { SoundCloudPlugin } = require('@distube/soundcloud');
-const { DisTube } = require('distube');
 const { execFile, spawn } = require('child_process');
 const path = require('path');
 const { PassThrough } = require('stream');
@@ -21,7 +19,7 @@ const YT_DLP_PATH = path.join(__dirname, '../commands-audios/yt-dlp.exe');
 const COOKIES_PATH = path.join(__dirname, '../commands-audios/cookies.txt');
 const STREAM_URL_MAX_AGE = 4 * 60 * 60 * 1000;
 const DEFAULT_MUSIC_VOLUME = 100;
-const MAX_SPOTIFY_QUEUE_SIZE = 1_000;
+const MAX_MUSIC_QUEUE_SIZE = 1_000;
 const MAX_VOICE_STATUS_LENGTH = 500;
 
 // ─── Fila por guild ───────────────────────────────────────────────
@@ -29,9 +27,7 @@ const guildQueues = new Map(); // guildId -> { songs[], player, connection, play
 const playerMessages = new Map(); // guildId -> Message
 const playerMessageDeleteListeners = new Map(); // guildId -> { client, listener }
 const pendingPlayRequests = new Map(); // guildId -> quantidade de /play em processamento
-const retriedDistubeSongs = new WeakSet();
-const distubeVoiceGuards = new WeakMap();
-let distube = null;
+const pendingQueueCreations = new Map(); // guildId -> { voiceChannelId, promise }
 let spotifyPlugin = null;
 let spotifyPublicPlugin = null;
 
@@ -89,6 +85,38 @@ function formatDuration(seconds) {
     const minutes = Math.floor(wholeSeconds / 60);
     const remainingSeconds = wholeSeconds % 60;
     return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function getSongPlatform(songOrInfo = {}) {
+    if (songOrInfo.platform) return songOrInfo.platform;
+    const source = [
+        songOrInfo.extractor,
+        songOrInfo.extractor_key,
+        songOrInfo.url,
+        songOrInfo.webpage_url,
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (source.includes('soundcloud')) return 'SoundCloud';
+    if (source.includes('spotify')) return 'Spotify';
+    return 'YouTube';
+}
+
+const PLATFORM_EMOJIS = Object.freeze({
+    YouTube: '<:YouTube:1547054428962689105>',
+    Spotify: '<:Spotify:1547054692155269181>',
+    SoundCloud: '<:Soundcloud:1547054864083714100>',
+});
+
+function getPlatformIcon(song) {
+    return PLATFORM_EMOJIS[getSongPlatform(song)] ?? '🎵';
+}
+
+function isPlaylistUrl(query) {
+    if (!/^https:\/\//i.test(query)) return false;
+    const parsed = new URL(query);
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname.includes('youtube.com')) return parsed.pathname === '/playlist';
+    if (hostname.includes('soundcloud.com')) return parsed.pathname.split('/').includes('sets');
+    return false;
 }
 
 function getLoopMode(customMode, repeatMode = 0) {
@@ -242,6 +270,7 @@ function getSongInfo(query) {
                     thumbnail: info.thumbnail ?? null,
                     url: info.webpage_url ?? query,
                     uploader: info.uploader ?? 'Desconhecido',
+                    platform: getSongPlatform(info),
                     formattedDuration: formatDuration(info.duration ?? 0),
                     ...streamData,
                     resolvedAt: Date.now(),
@@ -249,6 +278,69 @@ function getSongInfo(query) {
                 });
             } catch {
                 reject(new Error('Erro ao parsear informações da música.'));
+            }
+        });
+    });
+}
+
+function createPlaylistQueueSongs(info, user, sourceQuery) {
+    const entries = Array.isArray(info.entries) ? info.entries : [];
+    if (entries.length > MAX_MUSIC_QUEUE_SIZE) {
+        throw new Error(`A playlist possui mais de ${MAX_MUSIC_QUEUE_SIZE} faixas.`);
+    }
+
+    const platform = getSongPlatform({ ...info, url: sourceQuery });
+    const songs = entries.map((entry) => {
+        let url = entry.webpage_url ?? entry.original_url ?? entry.url;
+        if (platform === 'YouTube' && !/^https:\/\//i.test(url ?? '') && entry.id) {
+            url = `https://www.youtube.com/watch?v=${encodeURIComponent(entry.id)}`;
+        }
+        if (!/^https:\/\//i.test(url ?? '')) return null;
+        const uploader = entry.uploader ?? entry.channel ?? info.uploader ?? 'Desconhecido';
+        const duration = Number.isFinite(entry.duration) ? entry.duration : 0;
+        return {
+            title: entry.title ?? 'Faixa desconhecida',
+            duration,
+            formattedDuration: formatDuration(duration),
+            thumbnail: entry.thumbnail ?? entry.thumbnails?.at(-1)?.url ?? null,
+            url,
+            uploader,
+            user,
+            platform,
+            streamQuery: url,
+            streamUrl: null,
+            httpHeaders: {},
+            resolvedAt: 0,
+            preserveMetadata: true,
+        };
+    }).filter(Boolean);
+    if (songs.length === 0) throw new Error('A playlist não possui faixas reproduzíveis.');
+    return songs;
+}
+
+function getPlaylistSongs(query, user) {
+    return new Promise((resolve, reject) => {
+        execFile(YT_DLP_PATH, [
+            '--cookies', COOKIES_PATH,
+            '--js-runtimes', `node:${process.execPath}`,
+            '--flat-playlist',
+            '--dump-single-json',
+            '--playlist-end', String(MAX_MUSIC_QUEUE_SIZE + 1),
+            '--no-warnings',
+            '--quiet',
+            query,
+        ], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+            if (error) return reject(createYtDlpError(error, stderr));
+            let info;
+            try {
+                info = JSON.parse(stdout);
+            } catch {
+                return reject(new Error('Erro ao interpretar a playlist.'));
+            }
+            try {
+                return resolve(createPlaylistQueueSongs(info, user, query));
+            } catch (playlistError) {
+                return reject(playlistError);
             }
         });
     });
@@ -446,17 +538,16 @@ function createYtStream(song, spawnProcess = spawn) {
 
 function createEmbed(guildId) {
     const queue = guildQueues.get(guildId);
-    const distubeQueue = distube?.getQueue(guildId);
-    const songs = queue?.songs ?? distubeQueue?.songs ?? [];
+    const songs = queue?.songs ?? [];
     const song = songs[0] ?? null;
-    const loopMode = getLoopMode(queue?.loop, distubeQueue?.repeatMode);
+    const loopMode = getLoopMode(queue?.loop);
     let loopLabel = '`Sem refrão`';
     if (loopMode === 'song') loopLabel = '`Uma balada`';
     if (loopMode === 'queue') loopLabel = '`Toda a jornada`';
     const queueSize = songs.length;
-    const requester = song?.user ?? song?.member?.user;
-    const isPaused = queue?.paused ?? distubeQueue?.paused ?? false;
-    const volume = queue?.volume ?? distubeQueue?.volume ?? 100;
+    const requester = song?.user;
+    const isPaused = queue?.paused ?? false;
+    const volume = queue?.volume ?? DEFAULT_MUSIC_VOLUME;
     const uploader = typeof song?.uploader === 'string' ? song.uploader : song?.uploader?.name;
     let embedColor = 0x2F4F3E;
     if (song) embedColor = isPaused ? 0xC9A227 : 0x7A1F2B;
@@ -468,7 +559,7 @@ function createEmbed(guildId) {
     if (song) {
         const upcoming = songs.slice(1, 4).map((nextSong, index) => {
             const name = nextSong.title ?? nextSong.name ?? 'Faixa desconhecida';
-            return `**${index + 1}.** ${name.slice(0, 70)}`;
+            return `**${index + 1}.** ${getPlatformIcon(nextSong)} ${name.slice(0, 67)}`;
         });
         const hiddenSongs = Math.max(0, songs.length - 4);
         if (hiddenSongs > 0) upcoming.push(`*e mais ${hiddenSongs} música(s)...*`);
@@ -480,6 +571,7 @@ function createEmbed(guildId) {
                 '',
                 isPaused ? '⏸️ **A BALADA ESTÁ EM DESCANSO**' : '▶️ **BALADA EM EXECUÇÃO**',
                 uploader ? `🪕 Entoada por **${uploader.slice(0, 100)}**` : '🪕 Menestrel desconhecido',
+                `${getPlatformIcon(song)} Fonte: **${getSongPlatform(song)}**`,
             ].join('\n'))
             .addFields(
                 { name: '⌛ Duração', value: `\`${song.formattedDuration ?? '?:??'}\``, inline: true },
@@ -507,7 +599,11 @@ function createEmbed(guildId) {
             ].join('\n'))
             .addFields(
                 { name: '📜 Exemplo de invocação', value: '`/play The Dragonborn Comes`', inline: false },
-                { name: '🗺️ Repertório dos reinos', value: '`YouTube`  •  `Spotify`  •  `SoundCloud`', inline: false },
+                {
+                    name: '🗺️ Repertório dos reinos',
+                    value: `${PLATFORM_EMOJIS.YouTube} **YouTube**  •  ${PLATFORM_EMOJIS.Spotify} **Spotify**  •  ${PLATFORM_EMOJIS.SoundCloud} **SoundCloud**`,
+                    inline: false,
+                },
             )
             .setFooter({ text: 'Que rolem os dados e ressoem as canções ⚔️' });
     }
@@ -517,9 +613,8 @@ function createEmbed(guildId) {
 
 function createRows(guildId) {
     const queue = guildQueues.get(guildId);
-    const distubeQueue = distube?.getQueue(guildId);
-    const isPaused = queue?.paused ?? distubeQueue?.paused ?? false;
-    const loopMode = getLoopMode(queue?.loop, distubeQueue?.repeatMode);
+    const isPaused = queue?.paused ?? false;
+    const loopMode = getLoopMode(queue?.loop);
     let loopLabel = 'Sem Refrão';
     if (loopMode === 'song') loopLabel = 'Uma Balada';
     if (loopMode === 'queue') loopLabel = 'Toda a Jornada';
@@ -638,8 +733,8 @@ async function resolveSpotify(query, options, primaryPlugin = getSpotifyPlugin()
 
 function createSpotifyQueueSongs(resolved, user) {
     const tracks = Array.isArray(resolved.songs) ? resolved.songs : [resolved];
-    if (tracks.length > MAX_SPOTIFY_QUEUE_SIZE) {
-        throw new Error(`A playlist possui mais de ${MAX_SPOTIFY_QUEUE_SIZE} faixas.`);
+    if (tracks.length > MAX_MUSIC_QUEUE_SIZE) {
+        throw new Error(`A playlist possui mais de ${MAX_MUSIC_QUEUE_SIZE} faixas.`);
     }
 
     return tracks.map((track) => {
@@ -653,6 +748,7 @@ function createSpotifyQueueSongs(resolved, user) {
             url: track.url,
             uploader,
             user,
+            platform: 'Spotify',
             streamQuery: `${title} ${uploader} official audio`.slice(0, 200),
             streamUrl: null,
             httpHeaders: {},
@@ -663,96 +759,9 @@ function createSpotifyQueueSongs(resolved, user) {
     });
 }
 
-async function stopDistubeSession(guildId, expectedVoice, deleteMenu = true) {
-    const voice = distube?.voices.get(guildId);
-    if (!voice || (expectedVoice && expectedVoice !== voice)) return;
-    const { channel } = voice;
-    distubeVoiceGuards.get(voice)?.dispose();
-    const closingMenu = deleteMenu ? closePlayerMessage(guildId) : Promise.resolve();
-    voice.leave();
-    await Promise.all([closingMenu, setVoiceChannelStatus(channel, null)]);
-}
-
-// ─── DisTube apenas para SoundCloud ──────────────────────────────
-function getDistube(client) {
-    if (!distube) {
-        distube = new DisTube(client, {
-            plugins: [new SoundCloudPlugin()],
-            ffmpeg: {
-                path: ffmpegPath,
-                args: {
-                    input: {
-                        reconnect_on_network_error: 1,
-                        reconnect_on_http_error: '4xx,5xx',
-                        rw_timeout: 15_000_000,
-                        user_agent: 'Mozilla/5.0',
-                    },
-                },
-            },
-        });
-        distube.on('initQueue', (queue) => {
-            queue.setVolume(DEFAULT_MUSIC_VOLUME);
-            const { voice } = queue;
-            const existingGuard = distubeVoiceGuards.get(voice);
-            if (existingGuard && !existingGuard.disposed) return;
-            distubeVoiceGuards.set(voice, createVoiceSessionGuard({
-                client,
-                connection: voice.connection,
-                player: voice.audioPlayer,
-                voiceChannel: queue.voiceChannel,
-                onLeave: () => stopDistubeSession(queue.id, voice),
-            }));
-        });
-        distube.on('playSong', (queue, song) => {
-            setVoiceChannelStatus(queue.voiceChannel, createVoiceChannelStatus(song));
-            updateMessage(queue.id);
-        });
-        distube.on('addSong', (queue) => updateMessage(queue.id));
-        distube.on('finishSong', (queue) => updateMessage(queue.id));
-        distube.on('deleteQueue', (queue) => {
-            setVoiceChannelStatus(queue.voiceChannel, null);
-            updateMessage(queue.id);
-        });
-        distube.on('disconnect', (queue) => {
-            setVoiceChannelStatus(queue.voiceChannel, null);
-            closePlayerMessage(queue.id);
-        });
-        distube.on('ffmpegDebug', (message) => {
-            if (/Premature close|-10054|Will reconnect|Error in the pull function/i.test(message)) return;
-            const isProcessError = /\[(?:process|stream)\] error:/i.test(message);
-            const isFfmpegError = /\[ffmpeg\] log:.*(?:error|invalid|failed|forbidden|timed? out|reset)/i
-                .test(message);
-            if (!isProcessError && !isFfmpegError) return;
-            const safeMessage = message.replace(/https?:\/\/\S+/gi, '[URL removida]');
-            console.error('[DisTube/FFmpeg]', safeMessage);
-        });
-        distube.on('error', (error, queue, song) => {
-            if (error.errorCode === 'FFMPEG_EXITED' && queue && song && !retriedDistubeSongs.has(song)) {
-                retriedDistubeSongs.add(song);
-                const playableSong = song.stream?.playFromSource ? song : song.stream?.song;
-                if (playableSong?.stream) delete playableSong.stream.url;
-                queue.songs.unshift(song);
-                return;
-            }
-
-            console.error('DisTube error:', error);
-            queue?.textChannel?.send({ content: '❌ Não foi possível reproduzir essa faixa; ela foi pulada.' })
-                .then((message) => setTimeout(() => message.delete().catch(() => {}), 8_000))
-                .catch(() => {});
-        });
-    }
-    return distube;
-}
-
-function getDistubeQueue(guildId) {
-    return distube?.getQueue(guildId);
-}
-
 function isMusicActive(guildId) {
     return pendingPlayRequests.has(guildId)
-        || guildQueues.has(guildId)
-        || Boolean(getDistubeQueue(guildId))
-        || Boolean(distube?.voices.get(guildId));
+        || guildQueues.has(guildId);
 }
 
 async function stopCustomQueue(guildId) {
@@ -794,14 +803,7 @@ async function advanceCustomQueue(guildId, direction = 'next') {
 }
 
 // ─── Conecta ao canal de voz e monta o player ────────────────────
-async function ensureQueue(guild, voiceChannel) {
-    if (!voiceChannel.members.some((member) => !member.user.bot)) {
-        throw new Error('Não há usuários no canal de voz para iniciar a reprodução.');
-    }
-    if (guildQueues.has(guild.id)) return guildQueues.get(guild.id);
-    // Troca de backend sem encerrar o menu que será reutilizado pela nova fila.
-    if (!getDistubeQueue(guild.id) && distube?.voices.get(guild.id)) await stopDistubeSession(guild.id, undefined, false);
-
+async function createQueue(guild, voiceChannel) {
     const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
         guildId: guild.id,
@@ -896,6 +898,52 @@ async function ensureQueue(guild, voiceChannel) {
     return queue;
 }
 
+async function ensureQueue(guild, voiceChannel) {
+    if (!voiceChannel.members.some((member) => !member.user.bot)) {
+        throw new Error('Não há usuários no canal de voz para iniciar a reprodução.');
+    }
+    if (guildQueues.has(guild.id)) return guildQueues.get(guild.id);
+
+    const pending = pendingQueueCreations.get(guild.id);
+    if (pending) {
+        if (pending.voiceChannelId !== voiceChannel.id) {
+            throw new Error('Entre no mesmo canal de voz do bot para adicionar músicas.');
+        }
+        return pending.promise;
+    }
+
+    const promise = createQueue(guild, voiceChannel);
+    pendingQueueCreations.set(guild.id, { voiceChannelId: voiceChannel.id, promise });
+    try {
+        return await promise;
+    } finally {
+        const current = pendingQueueCreations.get(guild.id);
+        if (current?.promise === promise) pendingQueueCreations.delete(guild.id);
+    }
+}
+
+async function enqueueSongs(guild, voiceChannel, songs, helpers = {}) {
+    const ensure = helpers.ensureQueue ?? ensureQueue;
+    const start = helpers.playNext ?? playNext;
+    const prefetch = helpers.prefetchNextSong ?? prefetchNextSong;
+    const refresh = helpers.updateMessage ?? updateMessage;
+    const queue = await ensure(guild, voiceChannel);
+    queue.songs.push(...songs);
+
+    if (queue.player.state.status === AudioPlayerStatus.Idle && !queue.starting) {
+        queue.starting = true;
+        try {
+            await start(guild.id);
+        } finally {
+            queue.starting = false;
+        }
+    } else {
+        prefetch(queue);
+        await refresh(guild.id);
+    }
+    return queue;
+}
+
 // ─── Exports ─────────────────────────────────────────────────────
 module.exports = {
     data: new SlashCommandBuilder()
@@ -929,11 +977,8 @@ module.exports = {
             const query = validateQuery(interaction.options.getString('query'));
             const queryUrl = /^https:\/\//i.test(query) ? new URL(query) : null;
             const isSpotify = queryUrl?.hostname.toLowerCase().includes('spotify.com');
-            const isSoundCloud = queryUrl?.hostname.toLowerCase().includes('soundcloud.com');
             const customQueue = guildQueues.get(interaction.guild.id);
-            const existingDistubeQueue = getDistubeQueue(interaction.guild.id);
-            const activeVoiceChannelId = customQueue?.connection?.joinConfig?.channelId
-                ?? existingDistubeQueue?.voiceChannel?.id;
+            const activeVoiceChannelId = customQueue?.connection?.joinConfig?.channelId;
             if (activeVoiceChannelId && activeVoiceChannelId !== voiceChannel.id) {
                 return interaction.editReply('❌ Entre no mesmo canal de voz do bot para adicionar músicas.');
             }
@@ -946,57 +991,19 @@ module.exports = {
                 registerPlayerMessage(interaction.guild.id, sentMessage, interaction.client);
             }
 
+            let songs;
             if (isSpotify) {
-                if (getDistubeQueue(interaction.guild.id)) {
-                    return interaction.editReply('❌ Finalize a fila do SoundCloud antes de usar Spotify.');
-                }
-
                 const resolved = await resolveSpotify(query, { member: interaction.member });
-                const spotifySongs = createSpotifyQueueSongs(resolved, interaction.user);
-                const queue = await ensureQueue(interaction.guild, voiceChannel);
-                queue.songs.push(...spotifySongs);
-
-                if (queue.player.state.status === AudioPlayerStatus.Idle) {
-                    await playNext(interaction.guild.id);
-                } else {
-                    prefetchNextSong(queue);
-                    await updateMessage(interaction.guild.id);
-                }
-                await dismissReply(interaction);
-                return;
-            }
-
-            if (isSoundCloud) {
-                if (guildQueues.has(interaction.guild.id)) {
-                    return interaction.editReply('❌ Finalize a fila atual antes de trocar para SoundCloud.');
-                }
-                const dt = getDistube(interaction.client);
-                await dt.play(voiceChannel, query, { textChannel: interaction.channel, member: interaction.member });
-                await updateMessage(interaction.guild.id);
-                await dismissReply(interaction);
-                return;
-            }
-
-            if (getDistubeQueue(interaction.guild.id)) {
-                return interaction.editReply('❌ Finalize a fila atual antes de trocar para YouTube.');
-            }
-
-            // YouTube ou busca por nome
-            const songInfo = await getSongInfo(query);
-            songInfo.user = interaction.user;
-
-            const queue = await ensureQueue(interaction.guild, voiceChannel);
-            queue.songs.push(songInfo);
-
-            if (queue.player.state.status === AudioPlayerStatus.Idle) {
-                await playNext(interaction.guild.id);
+                songs = createSpotifyQueueSongs(resolved, interaction.user);
+            } else if (isPlaylistUrl(query)) {
+                songs = await getPlaylistSongs(query, interaction.user);
             } else {
-                prefetchNextSong(queue);
-                await updateMessage(interaction.guild.id);
-                await dismissReply(interaction);
-                return;
+                const songInfo = await getSongInfo(query);
+                songInfo.user = interaction.user;
+                songs = [songInfo];
             }
 
+            await enqueueSongs(interaction.guild, voiceChannel, songs);
             await dismissReply(interaction);
         } catch (error) {
             const ageRestricted = error?.code === 'YOUTUBE_AGE_AUTH_REQUIRED';
@@ -1023,11 +1030,10 @@ module.exports = {
     createRows,
     updateMessage,
     playNext,
+    enqueueSongs,
     advanceCustomQueue,
-    getDistubeQueue,
     isMusicActive,
     stopCustomQueue,
-    stopDistubeSession,
     formatDuration,
     validateQuery,
     getSelectedStreamData,
@@ -1038,6 +1044,12 @@ module.exports = {
     createVoiceChannelStatus,
     setVoiceChannelStatus,
     createSpotifyQueueSongs,
+    createPlaylistQueueSongs,
+    getPlaylistSongs,
+    isPlaylistUrl,
+    getSongPlatform,
+    getPlatformIcon,
+    PLATFORM_EMOJIS,
     isSongStreamFresh,
     resolveSongStream,
     prefetchNextSong,

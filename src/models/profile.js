@@ -11,8 +11,20 @@ const profileSchema = new mongoose.Schema({
     emblems: { type: [String], default: [] },
     rewards: { type: [String], default: [] },
     customizations: {
-        color: { type: String, default: '#00FF00' },
-        title: { type: String, default: '' },
+        color: {
+            type: String,
+            default: '#8B1E2D',
+            match: /^#[0-9a-f]{6}$/i,
+        },
+        title: {
+            type: String, default: '', trim: true, maxlength: 30,
+        },
+        motto: {
+            type: String, default: '', trim: true, maxlength: 80,
+        },
+        crest: {
+            type: String, default: '⚔️', trim: true, maxlength: 8,
+        },
     },
     lastDaily: { type: Date, default: null },
     lastInteraction: { type: Date, default: null },

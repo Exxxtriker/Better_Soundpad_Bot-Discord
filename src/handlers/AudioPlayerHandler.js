@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { safelyDestroyVoiceConnection } = require('../utils/voiceConnection');
 const { createVoiceSessionGuard } = require('../utils/voiceSessionGuard');
+const { buildAudioCatalog, parseAudioName } = require('../utils/audioCatalog');
 
 class AudioPlayerManager {
     constructor(guild, voiceChannel, audioFolder, supportedExtensions, client, onDestroy) {
@@ -41,9 +42,7 @@ class AudioPlayerManager {
         this.itemsPerPage = 25; // áudios por página
 
         // Lista de áudios
-        const files = fs.readdirSync(audioFolder)
-            .filter((file) => supportedExtensions.includes(path.extname(file).toLowerCase()));
-        this.audioNames = [...new Set(files.map((f) => path.basename(f, path.extname(f))))];
+        this.reloadAudioList();
 
         // Listener do player
         this.player.on(AudioPlayerStatus.Idle, () => {
@@ -77,19 +76,46 @@ class AudioPlayerManager {
 
     // ----------------- Paginação e Reload -----------------
     getTotalPages() {
-        return Math.ceil(this.audioNames.length / this.itemsPerPage) || 1;
+        return Math.ceil(this.getSelectedEntries().length / this.itemsPerPage) || 1;
     }
 
     getAudioPage() {
         const start = (this.currentPage - 1) * this.itemsPerPage;
         const end = start + this.itemsPerPage;
-        return this.audioNames.slice(start, end);
+        return this.getSelectedEntries().slice(start, end);
+    }
+
+    getCategories() {
+        return [...this.audioCatalog.keys()];
+    }
+
+    getSelectedEntries() {
+        return this.audioCatalog.get(this.selectedCategory) || [];
+    }
+
+    selectCategory(category) {
+        if (!this.audioCatalog.has(category)) return false;
+        this.selectedCategory = category;
+        this.currentPage = 1;
+        return true;
+    }
+
+    getDisplayName(audioName) {
+        const entry = [...this.audioCatalog.values()]
+            .flat()
+            .find((audio) => audio.audioName === audioName);
+        return entry?.displayName || parseAudioName(audioName).displayName;
     }
 
     reloadAudioList() {
+        const previousCategory = this.selectedCategory;
         const files = fs.readdirSync(this.audioFolder)
             .filter((file) => this.supportedExtensions.includes(path.extname(file).toLowerCase()));
         this.audioNames = [...new Set(files.map((f) => path.basename(f, path.extname(f))))];
+        this.audioCatalog = buildAudioCatalog(this.audioNames);
+        this.selectedCategory = this.audioCatalog.has(previousCategory)
+            ? previousCategory
+            : this.getCategories()[0];
         this.currentPage = 1;
     }
     // -------------------------------------------------------

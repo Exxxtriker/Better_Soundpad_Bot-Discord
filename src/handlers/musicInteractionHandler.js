@@ -1,10 +1,9 @@
 const {
     advanceCustomQueue,
-    getDistubeQueue,
+    getPlatformIcon,
     guildQueues,
     prefetchNextSong,
     stopCustomQueue,
-    stopDistubeSession,
     updateMessage,
 } = require('../commands/music/play');
 
@@ -23,17 +22,14 @@ module.exports = async (interaction) => {
     if (!interaction.inGuild()) return;
 
     const { guildId } = interaction;
-    const customQueue = guildQueues.get(guildId);
-    const distubeQueue = getDistubeQueue(guildId);
-    const queue = customQueue ?? distubeQueue;
+    const queue = guildQueues.get(guildId);
 
     if (!queue) {
         await interaction.reply({ content: '❌ Não há nenhuma música tocando no momento!', flags: 64 });
         return;
     }
 
-    const voiceChannelId = customQueue?.connection?.joinConfig?.channelId
-        ?? distubeQueue?.voiceChannel?.id;
+    const voiceChannelId = queue.connection?.joinConfig?.channelId;
     if (!interaction.member.voice.channelId || interaction.member.voice.channelId !== voiceChannelId) {
         await interaction.reply({
             content: '⚠️ Entre no mesmo canal de voz do bot para usar estes controles.',
@@ -47,54 +43,40 @@ module.exports = async (interaction) => {
     try {
         switch (interaction.customId) {
         case 'music_pause':
-            if (customQueue) {
-                if (customQueue.paused) customQueue.player.unpause();
-                else customQueue.player.pause();
-                customQueue.paused = !customQueue.paused;
-            } else if (distubeQueue.paused) await distubeQueue.resume();
-            else await distubeQueue.pause();
+            if (queue.paused) queue.player.unpause();
+            else queue.player.pause();
+            queue.paused = !queue.paused;
             await updateMessage(guildId);
             break;
 
         case 'music_skip':
-            if (customQueue) await advanceCustomQueue(guildId);
-            else await distubeQueue.skip();
+            await advanceCustomQueue(guildId);
             await updateMessage(guildId);
             break;
 
         case 'music_prev':
-            if (customQueue) {
-                const changed = await advanceCustomQueue(guildId, 'previous');
-                if (!changed) throw new Error('Não há música anterior.');
-            } else {
-                await distubeQueue.previous();
-            }
+            if (!await advanceCustomQueue(guildId, 'previous')) throw new Error('Não há música anterior.');
             await updateMessage(guildId);
             break;
 
         case 'music_stop':
-            if (customQueue) await stopCustomQueue(guildId);
-            else await stopDistubeSession(guildId);
+            await stopCustomQueue(guildId);
             break;
 
         case 'music_loop':
-            if (customQueue) {
+            {
                 const modes = ['off', 'song', 'queue'];
-                customQueue.loop = modes[(modes.indexOf(customQueue.loop) + 1) % modes.length];
-            } else {
-                distubeQueue.setRepeatMode();
+                queue.loop = modes[(modes.indexOf(queue.loop) + 1) % modes.length];
             }
             await updateMessage(guildId);
             break;
 
         case 'music_shuffle':
-            if (customQueue) {
-                const current = customQueue.songs.shift();
-                customQueue.songs.sort(() => Math.random() - 0.5);
-                if (current) customQueue.songs.unshift(current);
-                prefetchNextSong(customQueue);
-            } else {
-                await distubeQueue.shuffle();
+            {
+                const current = queue.songs.shift();
+                queue.songs.sort(() => Math.random() - 0.5);
+                if (current) queue.songs.unshift(current);
+                prefetchNextSong(queue);
             }
             await updateMessage(guildId);
             break;
@@ -104,7 +86,7 @@ module.exports = async (interaction) => {
             if (songs.length === 0) throw new Error('A fila está vazia.');
             const list = songs.slice(0, 10).map((song, index) => {
                 const position = index === 0 ? '▶️' : `\`${index}.\``;
-                return `${position} **${song.title ?? song.name}** \`${song.formattedDuration ?? '?:??'}\``;
+                return `${position} ${getPlatformIcon(song)} **${song.title ?? song.name}** \`${song.formattedDuration ?? '?:??'}\``;
             }).join('\n');
             const extra = songs.length > 10 ? `\n...e mais **${songs.length - 10}** músicas.` : '';
             await interaction.followUp({ content: `🎶 **Fila atual:**\n${list}${extra}`, flags: 64 });

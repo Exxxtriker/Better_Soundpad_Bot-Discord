@@ -1,8 +1,8 @@
 const Profile = require('../models/profile');
 
-const XP_PER_MESSAGE = 1; // XP por mensagem
-const POINTS_PER_MESSAGE = 2; // Pontos por mensagem
-const INTERACTION_COOLDOWN = 60 * 1000; // 1 minuto
+const XP_PER_ACTION = 1;
+const POINTS_PER_ACTION = 2;
+const progressUpdateQueues = new Map();
 
 function calculateRank(level) {
     if (level >= 90) return 'Ancião';
@@ -13,43 +13,41 @@ function calculateRank(level) {
     return 'Novato';
 }
 
-async function addInteraction(userId, username) {
+async function updateProgress(userId, username) {
     const now = new Date();
-    const cooldownLimit = new Date(now.getTime() - INTERACTION_COOLDOWN);
-
-    await Profile.updateOne(
-        { userId },
-        { $set: { username }, $setOnInsert: { userId } },
-        { upsert: true, setDefaultsOnInsert: true },
-    );
-
     const profile = await Profile.findOneAndUpdate(
+        { userId },
         {
-            userId,
-            $or: [
-                { lastInteraction: null },
-                { lastInteraction: { $lte: cooldownLimit } },
-            ],
-        },
-        {
-            $inc: { points: POINTS_PER_MESSAGE, xp: XP_PER_MESSAGE },
+            $inc: { points: POINTS_PER_ACTION, xp: XP_PER_ACTION },
             $set: { lastInteraction: now, username },
+            $setOnInsert: { userId },
         },
-        { new: true },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
     );
 
-    if (!profile) return Profile.findOne({ userId });
-
-    const xpNeeded = profile.level * 100;
-    if (profile.xp >= xpNeeded) {
+    let leveledUp = false;
+    while (profile.xp >= profile.level * 100) {
+        profile.xp -= profile.level * 100;
         profile.level += 1;
-        profile.xp -= xpNeeded;
+        leveledUp = true;
     }
 
-    profile.rank = calculateRank(profile.level);
-
-    await profile.save();
+    if (leveledUp) {
+        profile.rank = calculateRank(profile.level);
+        await profile.save();
+    }
     return profile;
+}
+
+async function addInteraction(userId, username) {
+    const previous = progressUpdateQueues.get(userId) ?? Promise.resolve();
+    const update = previous.catch(() => {}).then(() => updateProgress(userId, username));
+    progressUpdateQueues.set(userId, update);
+    try {
+        return await update;
+    } finally {
+        if (progressUpdateQueues.get(userId) === update) progressUpdateQueues.delete(userId);
+    }
 }
 
 // Verifica emblemas e desbloqueia recompensas
@@ -102,7 +100,7 @@ async function checkEmblems(profile) {
         }
     }
 
-    await profile.save();
+    if (newEmblems.length > 0 || newRewards.length > 0) await profile.save();
     return { newEmblems, newRewards };
 }
 

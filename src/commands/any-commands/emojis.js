@@ -3,7 +3,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
 
-const OWNER_ID = '335012394226941966';
+const OWNER_ID = '1467356224487161876';
 const MAX_EMOJI_BYTES = 512 * 1024;
 
 function formatEmoji(emoji) {
@@ -32,7 +32,7 @@ module.exports = {
 
     async execute(interaction) {
         if (interaction.user.id !== OWNER_ID) {
-            return interaction.reply({ content: '❌ Apenas o dono do bot pode usar este comando.', ephemeral: true });
+            return interaction.reply({ content: '❌ Apenas o dono do bot pode usar este comando.', flags: 64 });
         }
 
         await interaction.deferReply();

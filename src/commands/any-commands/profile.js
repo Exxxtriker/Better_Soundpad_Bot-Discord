@@ -1,91 +1,210 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { getProfile } = require('../../utils/profileManager');
 
+const DEFAULT_PROFILE_COLOR = '#8B1E2D';
+const DEFAULT_CREST = '⚔️';
+const LEGACY_DEFAULT_COLOR = '#00FF00';
+const numberFormatter = new Intl.NumberFormat('pt-BR');
+
+function escapeDisplayText(value, maxLength, fallback = '') {
+    const clean = Array.from(String(value ?? ''))
+        .filter((character) => {
+            const code = character.codePointAt(0);
+            return code > 31 && code !== 127;
+        })
+        .join('')
+        .trim()
+        .slice(0, maxLength);
+
+    if (!clean) return fallback;
+
+    return clean
+        .replace(/([\\`*_~|>])/g, '\\$1')
+        .replace(/@/g, '＠');
+}
+
+function normalizeProfile(profile = {}) {
+    const customizations = profile.customizations || {};
+    const rawColor = String(customizations.color || '');
+
+    return {
+        level: Math.max(1, Number.parseInt(profile.level, 10) || 1),
+        xp: Math.max(0, Number.parseInt(profile.xp, 10) || 0),
+        points: Math.max(0, Number.parseInt(profile.points, 10) || 0),
+        money: Math.max(0, Number.parseInt(profile.money, 10) || 0),
+        emblems: Array.isArray(profile.emblems) ? profile.emblems : [],
+        rewards: Array.isArray(profile.rewards) ? profile.rewards : [],
+        customizations: {
+            color: /^#[0-9a-f]{6}$/i.test(rawColor)
+                && rawColor.toUpperCase() !== LEGACY_DEFAULT_COLOR
+                ? rawColor
+                : DEFAULT_PROFILE_COLOR,
+            title: escapeDisplayText(customizations.title, 30),
+            motto: escapeDisplayText(customizations.motto, 80),
+            crest: escapeDisplayText(customizations.crest, 8, DEFAULT_CREST),
+        },
+    };
+}
+
+function getXPProgress(currentXP, level) {
+    const requiredXP = Math.max(100, level * 100);
+    const safeXP = Math.max(0, Number(currentXP) || 0);
+    const percent = Math.min(100, Math.floor((safeXP / requiredXP) * 100));
+    const barLength = 14;
+    const filledLength = Math.round((barLength * percent) / 100);
+
+    return {
+        requiredXP,
+        percent,
+        bar: `${'▰'.repeat(filledLength)}${'▱'.repeat(barLength - filledLength)}`,
+    };
+}
+
 function generateXPBar(currentXP, level) {
-    const totalXP = level * 100;
-    const percent = Math.min(1, Math.max(0, currentXP / totalXP));
-
-    const barLength = 20;
-    const filledLength = Math.round(barLength * percent);
-    const emptyLength = barLength - filledLength;
-
-    const filledBar = '✦'.repeat(filledLength);
-    const emptyBar = '✧'.repeat(emptyLength);
-
-    return `${filledBar}${emptyBar} ${Math.floor(percent * 100)}%`;
+    const progress = getXPProgress(currentXP, level);
+    return `${progress.bar}  **${progress.percent}%**\n\`${numberFormatter.format(currentXP)} / ${numberFormatter.format(progress.requiredXP)} XP\``;
 }
 
 function levelTitle(level) {
-    if (level >= 90) return '👑 Overlord';
-    if (level >= 70) return '🌌 Imperador Arcano';
-    if (level >= 50) return '🔥 Senhor da Guerra';
-    if (level >= 35) return '⚔️ Campeão do Reino';
-    if (level >= 20) return '🛡️ Cavaleiro Real';
-    if (level >= 10) return '🏹 Aventureiro';
-    if (level >= 5) return '🌱 Aprendiz';
-    return '🚜 Camponês';
+    if (level >= 90) return 'Soberano das Lendas';
+    if (level >= 70) return 'Imperador Arcano';
+    if (level >= 50) return 'Senhor da Guerra';
+    if (level >= 35) return 'Campeão do Reino';
+    if (level >= 20) return 'Cavaleiro Real';
+    if (level >= 10) return 'Aventureiro Veterano';
+    if (level >= 5) return 'Aprendiz da Guilda';
+    return 'Viajante Novato';
+}
+
+function listItems(items, fallback, maxLength = 1024) {
+    const text = items
+        .map((item) => {
+            const customEmojis = [];
+            const protectedText = String(item ?? '').replace(
+                /<a?:[a-z0-9_]{2,32}:\d{17,20}>/gi,
+                (emoji) => {
+                    const token = `\uE000${customEmojis.length}\uE001`;
+                    customEmojis.push({ token, emoji });
+                    return token;
+                },
+            );
+            let formatted = escapeDisplayText(protectedText, 120);
+            customEmojis.forEach(({ token, emoji }) => {
+                formatted = formatted.replace(token, emoji);
+            });
+            return formatted;
+        })
+        .filter(Boolean)
+        .join('  •  ');
+
+    return (text || fallback).slice(0, maxLength);
+}
+
+function buildProfileEmbed(user, rawProfile, clientUser) {
+    const profile = normalizeProfile(rawProfile);
+    const displayName = escapeDisplayText(
+        user.displayName || user.globalName || user.username,
+        80,
+        'Aventureiro',
+    );
+    const rank = levelTitle(profile.level);
+    const epithet = profile.customizations.title || rank;
+    const motto = profile.customizations.motto || 'Minha história ainda está sendo escrita nas crônicas da guilda.';
+
+    const embed = new EmbedBuilder()
+        .setColor(profile.customizations.color)
+        .setAuthor({
+            name: '⚜️ GIDEON • REGISTRO DOS AVENTUREIROS',
+            iconURL: clientUser?.displayAvatarURL?.(),
+        })
+        .setTitle(`${profile.customizations.crest} ${displayName} • Ficha de Aventureiro`)
+        .setThumbnail(user.displayAvatarURL?.({ size: 256 }) || null)
+        .setDescription(`**❖ ${epithet}**\n> “${motto}”`)
+        .addFields(
+            {
+                name: '🏰 Patente',
+                value: `**Nível ${profile.level}**\n${rank}`,
+                inline: true,
+            },
+            {
+                name: '🪙 Tesouro',
+                value: `**${numberFormatter.format(profile.money)}** moedas`,
+                inline: true,
+            },
+            {
+                name: '✨ Renome',
+                value: `**${numberFormatter.format(profile.points)}** pontos`,
+                inline: true,
+            },
+            {
+                name: `📈 Jornada até o nível ${profile.level + 1}`,
+                value: generateXPBar(profile.xp, profile.level),
+                inline: false,
+            },
+            {
+                name: '🏵️ Brasões conquistados',
+                value: listItems(profile.emblems, 'Nenhum brasão conquistado até agora.'),
+                inline: false,
+            },
+        )
+        .setFooter({
+            text: 'Crônicas de Gideon • Use /customizar para forjar sua identidade',
+            iconURL: clientUser?.displayAvatarURL?.(),
+        })
+        .setTimestamp();
+
+    if (profile.rewards.length) {
+        embed.addFields({
+            name: '🎁 Relíquias e recompensas',
+            value: listItems(profile.rewards, 'Nenhuma relíquia encontrada.'),
+            inline: false,
+        });
+    }
+
+    return embed;
 }
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('perfil')
-        .setDescription('Mostra o perfil lendário do aventureiro'),
+        .setDescription('Exibe sua ficha de aventureiro.'),
 
     async execute(interaction) {
         try {
             if (!interaction.replied && !interaction.deferred) {
-                await interaction.deferReply({ flags: 0 });
+                await interaction.deferReply();
             }
 
-            // Agora sempre pega o próprio usuário
-            const { user } = interaction;
-            const profile = await getProfile(user.id);
+            const profile = await getProfile(interaction.user.id);
 
             if (!profile) {
-                const response = 'Este aventureiro ainda não deixou sua marca neste reino místico.';
-                if (interaction.deferred) return await interaction.editReply(response);
-                return await interaction.reply(response);
+                await interaction.editReply({
+                    content: '❌ Não consegui abrir sua ficha agora. Tente novamente em alguns instantes.',
+                });
+                return;
             }
 
-            profile.emblems = profile.emblems || [];
-            profile.rewards = profile.rewards || [];
-            profile.money = profile.money || 0;
-
-            const xpBar = generateXPBar(profile.xp, profile.level);
-            const title = levelTitle(profile.level);
-
-            const embed = new EmbedBuilder()
-                .setTitle(`📜 Perfil de ${user.displayName}`)
-                .setColor(profile.customizations.color || '#00FF00')
-                .setThumbnail(user.displayAvatarURL({ dynamic: true }))
-                .setDescription('**🌟 Jornada de um verdadeiro aventureiro**\n⚔️ Siga crescendo, conquiste glórias e torne-se uma lenda viva!')
-                .addFields(
-                    { name: '🏆 Nível & Título', value: `${profile.level} • ${title}`, inline: true },
-                    { name: '💰 Ouro', value: `${profile.money} 🪙`, inline: true },
-                    { name: '🏅 Pontos', value: `${profile.points}`, inline: true },
-                    { name: '📛 Título Personalizado', value: profile.customizations.title || 'Nenhum', inline: false },
-                    { name: '🏵️ Emblemas', value: profile.emblems.length ? profile.emblems.join(' • ') : 'Nenhum', inline: false },
-                    { name: '✨ XP', value: xpBar, inline: false },
-                )
-                .setFooter({
-                    text: '⚔️ Continue sua jornada e torne-se lenda! | Guardião do reino 🛡️',
-                    iconURL: interaction.client.user.displayAvatarURL({ dynamic: true }),
-                });
-
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({
+                embeds: [buildProfileEmbed(interaction.user, profile, interaction.client.user)],
+            });
         } catch (error) {
-            console.error('Erro no comando /perfil:', error);
+            console.error('Erro ao exibir perfil:', error);
+            const payload = { content: '❌ Ocorreu um erro ao abrir sua ficha de aventureiro.' };
 
-            try {
-                const errorMessage = { content: '❌ Houve um erro ao executar este comando.' };
-                if (interaction.deferred) {
-                    await interaction.editReply(errorMessage);
-                } else if (!interaction.replied) {
-                    await interaction.reply({ ...errorMessage, flags: 64 });
-                }
-            } catch (replyError) {
-                console.error('Erro ao tentar responder após falha:', replyError);
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply(payload).catch(() => {});
+            } else {
+                await interaction.reply(payload).catch(() => {});
             }
         }
     },
+
+    DEFAULT_PROFILE_COLOR,
+    DEFAULT_CREST,
+    buildProfileEmbed,
+    escapeDisplayText,
+    generateXPBar,
+    getXPProgress,
+    levelTitle,
+    normalizeProfile,
 };
