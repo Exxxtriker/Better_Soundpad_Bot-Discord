@@ -18,6 +18,9 @@ const { createVoiceSessionGuard } = require('../../utils/voiceSessionGuard');
 const YT_DLP_PATH = path.join(__dirname, '../commands-audios/yt-dlp.exe');
 const COOKIES_PATH = path.join(__dirname, '../commands-audios/cookies.txt');
 const STREAM_URL_MAX_AGE = 4 * 60 * 60 * 1000;
+const DIRECT_STREAM_START_TIMEOUT = 8_000;
+const FALLBACK_STREAM_START_TIMEOUT = 20_000;
+const STREAM_BUFFER_SIZE = 512 * 1024;
 const DEFAULT_MUSIC_VOLUME = 100;
 const MAX_MUSIC_QUEUE_SIZE = 1_000;
 const MAX_VOICE_STATUS_LENGTH = 500;
@@ -246,39 +249,81 @@ function createYtDlpError(error, stderr = '') {
     return ytDlpError;
 }
 
+function parseYtDlpJson(stdout, fallbackMessage) {
+    const output = String(stdout ?? '').replace(/^\uFEFF/, '').trim();
+    if (!output) {
+        const emptyOutputError = new Error('O yt-dlp não retornou informações da música.');
+        emptyOutputError.code = 'YT_DLP_EMPTY_OUTPUT';
+        throw emptyOutputError;
+    }
+
+    const candidates = [
+        output,
+        ...output.split(/\r?\n/).map((line) => line.trim()).reverse(),
+    ];
+    const firstBrace = output.indexOf('{');
+    const lastBrace = output.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+        candidates.push(output.slice(firstBrace, lastBrace + 1));
+    }
+
+    for (const candidate of candidates) {
+        if (candidate.startsWith('{') && candidate.endsWith('}')) {
+            try {
+                return JSON.parse(candidate);
+            } catch {
+                // Continua procurando uma linha JSON válida na saída do yt-dlp.
+            }
+        }
+    }
+
+    const invalidOutputError = new Error(fallbackMessage);
+    invalidOutputError.code = 'YT_DLP_INVALID_JSON';
+    throw invalidOutputError;
+}
+
 // ─── Pega info da música via yt-dlp ──────────────────────────────
 function getSongInfo(query) {
     return new Promise((resolve, reject) => {
         const input = /^https:\/\//i.test(query) ? query : `ytsearch1:${query}`;
         execFile(YT_DLP_PATH, [
+            '--ignore-config',
             '--cookies', COOKIES_PATH,
             '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio/best',
-            '--dump-json',
+            '--dump-single-json',
             '--no-warnings',
             '--quiet',
             '--no-playlist',
             input,
         ], { timeout: 60_000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
             if (error) return reject(createYtDlpError(error, stderr));
+            let info;
             try {
-                const info = JSON.parse(stdout.trim().split('\n')[0]);
-                const streamData = getSelectedStreamData(info);
-                resolve({
-                    title: info.title ?? 'Desconhecido',
-                    duration: info.duration ?? 0,
-                    thumbnail: info.thumbnail ?? null,
-                    url: info.webpage_url ?? query,
-                    uploader: info.uploader ?? 'Desconhecido',
-                    platform: getSongPlatform(info),
-                    formattedDuration: formatDuration(info.duration ?? 0),
-                    ...streamData,
-                    resolvedAt: Date.now(),
-                    user: null, // preenchido depois
-                });
-            } catch {
-                reject(new Error('Erro ao parsear informações da música.'));
+                info = parseYtDlpJson(stdout, 'O yt-dlp retornou dados inválidos para a música.');
+            } catch (parseError) {
+                return reject(parseError);
             }
+
+            let streamData;
+            try {
+                streamData = getSelectedStreamData(info);
+            } catch (streamError) {
+                return reject(streamError);
+            }
+
+            return resolve({
+                title: info.title ?? 'Desconhecido',
+                duration: info.duration ?? 0,
+                thumbnail: info.thumbnail ?? null,
+                url: info.webpage_url ?? query,
+                uploader: info.uploader ?? 'Desconhecido',
+                platform: getSongPlatform(info),
+                formattedDuration: formatDuration(info.duration ?? 0),
+                ...streamData,
+                resolvedAt: Date.now(),
+                user: null, // preenchido depois
+            });
         });
     });
 }
@@ -321,6 +366,7 @@ function createPlaylistQueueSongs(info, user, sourceQuery) {
 function getPlaylistSongs(query, user) {
     return new Promise((resolve, reject) => {
         execFile(YT_DLP_PATH, [
+            '--ignore-config',
             '--cookies', COOKIES_PATH,
             '--js-runtimes', `node:${process.execPath}`,
             '--flat-playlist',
@@ -333,9 +379,9 @@ function getPlaylistSongs(query, user) {
             if (error) return reject(createYtDlpError(error, stderr));
             let info;
             try {
-                info = JSON.parse(stdout);
-            } catch {
-                return reject(new Error('Erro ao interpretar a playlist.'));
+                info = parseYtDlpJson(stdout, 'O yt-dlp retornou dados inválidos para a playlist.');
+            } catch (parseError) {
+                return reject(parseError);
             }
             try {
                 return resolve(createPlaylistQueueSongs(info, user, query));
@@ -391,14 +437,31 @@ function prefetchNextSong(queue, resolver = getSongInfo) {
 function createYtStream(song, spawnProcess = spawn) {
     const headers = buildFfmpegHeaders(song.httpHeaders);
     const inputOptions = headers ? ['-headers', headers] : [];
-    const output = new PassThrough();
+    const output = new PassThrough({ highWaterMark: STREAM_BUFFER_SIZE });
     const processes = {
         ytdlp: null,
         ffmpeg: null,
         cancelled: false,
         failed: false,
+        timers: new Set(),
+        setTimer(callback, delay) {
+            const timer = setTimeout(() => {
+                this.timers.delete(timer);
+                callback();
+            }, delay);
+            timer.unref?.();
+            this.timers.add(timer);
+            return timer;
+        },
+        clearTimer(timer) {
+            if (!timer) return;
+            clearTimeout(timer);
+            this.timers.delete(timer);
+        },
         cancel() {
             this.cancelled = true;
+            this.timers.forEach((timer) => clearTimeout(timer));
+            this.timers.clear();
             this.ytdlp?.kill();
             this.ffmpeg?.kill();
         },
@@ -407,20 +470,30 @@ function createYtStream(song, spawnProcess = spawn) {
     let directError = '';
     let directFinished = false;
     let fallbackStarted = false;
+    let directStartTimer = null;
 
     const startFallback = () => {
         if (fallbackStarted || processes.cancelled) return;
         fallbackStarted = true;
+        processes.clearTimer(directStartTimer);
+        const streamQuery = song.streamQuery ?? song.url;
+        const fallbackInput = /^https:\/\//i.test(streamQuery)
+            ? streamQuery
+            : `ytsearch1:${streamQuery}`;
 
         const ytdlp = spawnProcess(YT_DLP_PATH, [
+            '--ignore-config',
             '--cookies', COOKIES_PATH,
             '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio/best',
             '--no-playlist',
+            '--socket-timeout', '15',
+            '--retries', '2',
+            '--fragment-retries', '2',
             '--no-warnings',
             '--quiet',
             '-o', '-',
-            song.streamQuery ?? song.url,
+            fallbackInput,
         ]);
         let fallbackFfmpeg = null;
         let downloadError = '';
@@ -434,6 +507,9 @@ function createYtStream(song, spawnProcess = spawn) {
             processes.cancel();
             if (!output.destroyed && !output.writableEnded) output.end();
         };
+        const fallbackStartTimer = processes.setTimer(() => {
+            fail(new Error('O áudio demorou demais para começar no modo compatível.'));
+        }, FALLBACK_STREAM_START_TIMEOUT);
 
         // Não abra o decodificador se o download falhou antes de entregar áudio.
         ytdlp.stdout.once('readable', () => {
@@ -441,6 +517,7 @@ function createYtStream(song, spawnProcess = spawn) {
             fallbackFfmpeg = spawnProcess(ffmpegPath, [
                 '-nostdin',
                 '-loglevel', 'error',
+                '-re',
                 '-i', 'pipe:0',
                 '-vn',
                 '-f', 's16le',
@@ -450,6 +527,9 @@ function createYtStream(song, spawnProcess = spawn) {
             ]);
             processes.ffmpeg = fallbackFfmpeg;
             fallbackFfmpeg.stdin.on('error', () => {});
+            fallbackFfmpeg.stdout.once('data', () => {
+                processes.clearTimer(fallbackStartTimer);
+            });
             fallbackFfmpeg.stdout.on('error', fail);
             fallbackFfmpeg.stderr.on('data', (data) => {
                 decoderError = `${decoderError}${data}`.slice(-4_000);
@@ -495,9 +575,10 @@ function createYtStream(song, spawnProcess = spawn) {
         '-reconnect_streamed', '1',
         '-reconnect_on_network_error', '1',
         '-reconnect_on_http_error', '429,5xx',
-        '-reconnect_delay_max', '5',
+        '-reconnect_delay_max', '2',
         '-rw_timeout', '15000000',
         ...inputOptions,
+        '-re',
         '-i', song.streamUrl,
         '-vn',
         '-f', 's16le',
@@ -506,12 +587,18 @@ function createYtStream(song, spawnProcess = spawn) {
         'pipe:1',
     ]);
     processes.ffmpeg = ffmpeg;
+    directStartTimer = processes.setTimer(() => {
+        if (processes.cancelled || directFinished || directBytes > 0) return;
+        ffmpeg.kill();
+        startFallback();
+    }, DIRECT_STREAM_START_TIMEOUT);
 
     ffmpeg.stdout.on('error', () => {});
     ffmpeg.stdout.on('data', (chunk) => {
         directBytes += chunk.length;
-        if (!output.destroyed && !output.writableEnded) output.write(chunk);
+        processes.clearTimer(directStartTimer);
     });
+    ffmpeg.stdout.pipe(output, { end: false });
     ffmpeg.stderr.on('data', (data) => {
         directError = `${directError}${data}`.slice(-4_000);
     });
@@ -677,9 +764,12 @@ async function playNext(guildId) {
     const song = queue.songs[0];
     queue.paused = false;
 
-    const currentResolution = resolveSongStream(song);
+    const shouldResolveBeforePlayback = !song.forceCompatibleStream
+        || isSongStreamFresh(song)
+        || Boolean(song.streamResolution);
+    const currentResolution = shouldResolveBeforePlayback ? resolveSongStream(song) : null;
     prefetchNextSong(queue);
-    await currentResolution;
+    if (currentResolution) await currentResolution;
     if (guildQueues.get(guildId) !== queue || queue.songs[0] !== song) return;
 
     const { stream, processes } = createYtStream(song);
@@ -693,6 +783,35 @@ async function playNext(guildId) {
     prefetchNextSong(queue);
     await setVoiceChannelStatus(queue.voiceChannel, createVoiceChannelStatus(song));
     await updateMessage(guildId);
+}
+
+async function playNextAvailable(guildId, starter = playNext) {
+    const queue = guildQueues.get(guildId);
+    if (!queue) return false;
+
+    const maximumAttempts = queue.songs.length;
+    const tryNextSong = async (remainingAttempts) => {
+        if (queue.songs.length === 0 || remainingAttempts <= 0) return false;
+        const song = queue.songs[0];
+        try {
+            await starter(guildId);
+            return true;
+        } catch (error) {
+            if (guildQueues.get(guildId) !== queue || queue.songs[0] !== song) throw error;
+            const title = String(song?.title ?? song?.name ?? 'Faixa desconhecida').slice(0, 120);
+            console.error(
+                `Erro ao preparar "${title}"; avançando a fila: ${error?.message ?? error}`,
+            );
+            stopProcesses(queue);
+            const failedSong = queue.songs.shift();
+            if (failedSong) queue.history.push(failedSong);
+            return tryNextSong(remainingAttempts - 1);
+        }
+    };
+
+    const started = await tryNextSong(maximumAttempts);
+    if (!started) await starter(guildId);
+    return started;
 }
 
 function getSpotifyPlugin() {
@@ -794,7 +913,7 @@ async function advanceCustomQueue(guildId, direction = 'next') {
             const current = queue.songs.shift();
             if (current) queue.history.push(current);
         }
-        await playNext(guildId);
+        await playNextAvailable(guildId);
         return true;
     } finally {
         const activeQueue = guildQueues.get(guildId);
@@ -818,7 +937,6 @@ async function createQueue(guild, voiceChannel) {
     }
 
     const player = createAudioPlayer();
-    player.on('error', handleAudioPlayerError);
     connection.subscribe(player);
 
     const queue = {
@@ -836,6 +954,11 @@ async function createQueue(guild, voiceChannel) {
     };
 
     guildQueues.set(guild.id, queue);
+    player.on('error', (error) => {
+        const activeQueue = guildQueues.get(guild.id);
+        if (activeQueue?.currentProcesses) activeQueue.currentProcesses.failed = true;
+        handleAudioPlayerError(error);
+    });
     queue.voiceGuard = createVoiceSessionGuard({
         client: guild.client,
         connection,
@@ -862,7 +985,7 @@ async function createQueue(guild, voiceChannel) {
                     const finished = q.songs.shift();
                     if (finished) q.history.push(finished);
                 }
-                await playNext(guild.id);
+                await playNextAvailable(guild.id);
             } finally {
                 const activeQueue = guildQueues.get(guild.id);
                 if (activeQueue) activeQueue.transitioning = false;
@@ -1030,6 +1153,7 @@ module.exports = {
     createRows,
     updateMessage,
     playNext,
+    playNextAvailable,
     enqueueSongs,
     advanceCustomQueue,
     isMusicActive,
@@ -1039,6 +1163,7 @@ module.exports = {
     getSelectedStreamData,
     buildFfmpegHeaders,
     createYtDlpError,
+    parseYtDlpJson,
     createYtStream,
     handleAudioPlayerError,
     createVoiceChannelStatus,
