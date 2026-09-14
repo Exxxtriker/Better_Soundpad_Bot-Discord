@@ -21,6 +21,8 @@ const STREAM_URL_MAX_AGE = 4 * 60 * 60 * 1000;
 const DIRECT_STREAM_START_TIMEOUT = 8_000;
 const FALLBACK_STREAM_START_TIMEOUT = 20_000;
 const STREAM_BUFFER_SIZE = 512 * 1024;
+const SPOTIFY_SEARCH_LIMIT = 8;
+const SPOTIFY_CANDIDATE_ATTEMPTS = 4;
 const DEFAULT_MUSIC_VOLUME = 100;
 const MAX_MUSIC_QUEUE_SIZE = 1_000;
 const MAX_VOICE_STATUS_LENGTH = 500;
@@ -103,6 +105,14 @@ function getSongPlatform(songOrInfo = {}) {
     return 'YouTube';
 }
 
+function detectMusicPlatform(query) {
+    if (!/^https:\/\//i.test(query)) return 'YouTube';
+    const hostname = new URL(query).hostname.toLowerCase();
+    if (hostname.includes('spotify.com')) return 'Spotify';
+    if (hostname.includes('soundcloud.com')) return 'SoundCloud';
+    return 'YouTube';
+}
+
 const PLATFORM_EMOJIS = Object.freeze({
     YouTube: '<:YouTube:1547054428962689105>',
     Spotify: '<:Spotify:1547054692155269181>',
@@ -172,8 +182,7 @@ function stopProcesses(queue) {
 }
 
 function handleAudioPlayerError(error) {
-    if (/write after end/i.test(error?.message ?? '')) return;
-    console.error(`Erro no player de áudio: ${error?.message ?? error}`);
+    console.error('Erro no player de áudio:', error);
 }
 
 function createVoiceChannelStatus(song) {
@@ -207,15 +216,85 @@ async function dismissReply(interaction) {
     });
 }
 
+function getFirstMediaEntry(info) {
+    if (!Array.isArray(info?.entries)) return info;
+    return info.entries.find((entry) => entry && typeof entry === 'object') ?? info;
+}
+
 function getSelectedStreamData(info) {
-    const selectedFormat = info.requested_downloads?.[0] ?? info;
-    const streamUrl = selectedFormat.url ?? info.url;
-    if (!streamUrl) throw new Error('O YouTube não retornou uma URL de áudio reproduzível.');
+    const mediaInfo = getFirstMediaEntry(info);
+    const requestedAudio = mediaInfo.requested_downloads?.find((format) => format?.url);
+    const mergedAudio = mediaInfo.requested_formats?.find(
+        (format) => format?.url && format.acodec !== 'none',
+    );
+    const availableAudio = mediaInfo.formats?.findLast?.(
+        (format) => format?.url && format.acodec !== 'none',
+    );
+    const selectedFormat = requestedAudio ?? mergedAudio ?? availableAudio ?? mediaInfo;
+    const streamUrl = selectedFormat.url ?? mediaInfo.url;
+    if (!streamUrl) throw new Error('A plataforma não retornou uma URL de áudio reproduzível.');
 
     return {
         streamUrl,
-        httpHeaders: selectedFormat.http_headers ?? info.http_headers ?? {},
+        httpHeaders: selectedFormat.http_headers ?? mediaInfo.http_headers ?? {},
     };
+}
+
+function normalizeMatchText(value) {
+    return String(value ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function getMatchTokens(value) {
+    const ignored = new Set(['official', 'audio', 'video', 'music', 'lyrics', 'remaster', 'hd']);
+    return normalizeMatchText(value)
+        .split(' ')
+        .filter((token) => token.length > 1 && !ignored.has(token));
+}
+
+function scoreYouTubeCandidate(candidate, song) {
+    const title = normalizeMatchText(song.title);
+    const artist = normalizeMatchText(song.uploader);
+    const candidateTitle = normalizeMatchText(candidate.title);
+    const candidateArtist = normalizeMatchText(candidate.uploader ?? candidate.channel);
+    const candidateText = `${candidateTitle} ${candidateArtist}`;
+    let score = 0;
+
+    if (title && candidateTitle.includes(title)) score += 30;
+    if (artist && candidateText.includes(artist)) score += 24;
+    getMatchTokens(song.title).forEach((token) => {
+        if (candidateTitle.includes(token)) score += 5;
+    });
+    getMatchTokens(song.uploader).forEach((token) => {
+        if (candidateText.includes(token)) score += 4;
+    });
+
+    const expectedDuration = Number(song.duration);
+    const candidateDuration = Number(candidate.duration);
+    if (expectedDuration > 0 && candidateDuration > 0) {
+        const difference = Math.abs(expectedDuration - candidateDuration);
+        if (difference <= 3) score += 18;
+        else if (difference <= 10) score += 10;
+        else if (difference <= 30) score += 3;
+        else if (difference >= 90) score -= 16;
+    }
+
+    const unwanted = ['cover', 'karaoke', 'instrumental', 'slowed', 'sped up', 'nightcore', 'remix', 'live'];
+    unwanted.forEach((term) => {
+        if (candidateTitle.includes(term) && !title.includes(term)) score -= 9;
+    });
+    return score;
+}
+
+function getYouTubeCandidateUrl(candidate) {
+    const url = candidate.webpage_url ?? candidate.original_url ?? candidate.url;
+    if (/^https:\/\//i.test(url ?? '')) return url;
+    const videoId = candidate.id ?? (/^[\w-]{11}$/.test(url ?? '') ? url : null);
+    return videoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}` : null;
 }
 
 function buildFfmpegHeaders(headers = {}) {
@@ -229,13 +308,24 @@ function createYtDlpError(error, stderr = '') {
     const details = [stderr, error?.stderr, error?.message]
         .filter(Boolean)
         .join('\n');
+    const attachDetails = (targetError) => {
+        const normalizedDetails = details.trim();
+        if (normalizedDetails) targetError.details = normalizedDetails.slice(-4_000);
+        return targetError;
+    };
 
     if (/sign in to confirm your age/i.test(details)) {
         const authError = new Error(
             'O YouTube exige uma conta autenticada e apta a confirmar a idade para este vídeo.',
         );
         authError.code = 'YOUTUBE_AGE_AUTH_REQUIRED';
-        return authError;
+        return attachDetails(authError);
+    }
+
+    if (/video is unavailable|video unavailable|has been removed/i.test(details)) {
+        const unavailableError = new Error('Este vídeo do YouTube está indisponível ou foi removido.');
+        unavailableError.code = 'YOUTUBE_UNAVAILABLE';
+        return attachDetails(unavailableError);
     }
 
     const errorLine = details
@@ -246,14 +336,14 @@ function createYtDlpError(error, stderr = '') {
         ?? 'O yt-dlp não conseguiu carregar o áudio.',
     );
     ytDlpError.code = error?.code ?? 'YT_DLP_ERROR';
-    return ytDlpError;
+    return attachDetails(ytDlpError);
 }
 
 function parseYtDlpJson(stdout, fallbackMessage) {
     const output = String(stdout ?? '').replace(/^\uFEFF/, '').trim();
     if (!output) {
-        const emptyOutputError = new Error('O yt-dlp não retornou informações da música.');
-        emptyOutputError.code = 'YT_DLP_EMPTY_OUTPUT';
+        const emptyOutputError = new Error('O extrator não retornou informações da faixa.');
+        emptyOutputError.code = 'MEDIA_EMPTY_OUTPUT';
         throw emptyOutputError;
     }
 
@@ -272,23 +362,25 @@ function parseYtDlpJson(stdout, fallbackMessage) {
             try {
                 return JSON.parse(candidate);
             } catch {
-                // Continua procurando uma linha JSON válida na saída do yt-dlp.
+                // Continua procurando uma linha JSON válida.
             }
         }
     }
 
     const invalidOutputError = new Error(fallbackMessage);
-    invalidOutputError.code = 'YT_DLP_INVALID_JSON';
+    invalidOutputError.code = 'MEDIA_INVALID_JSON';
     throw invalidOutputError;
 }
 
 // ─── Pega info da música via yt-dlp ──────────────────────────────
-function getSongInfo(query) {
+function getSongInfo(query, options = {}) {
     return new Promise((resolve, reject) => {
+        const { useCookies = true, timeoutMs = 60_000 } = options;
         const input = /^https:\/\//i.test(query) ? query : `ytsearch1:${query}`;
+        const cookieArgs = useCookies ? ['--cookies', COOKIES_PATH] : [];
         execFile(YT_DLP_PATH, [
             '--ignore-config',
-            '--cookies', COOKIES_PATH,
+            ...cookieArgs,
             '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio/best',
             '--dump-single-json',
@@ -296,36 +388,102 @@ function getSongInfo(query) {
             '--quiet',
             '--no-playlist',
             input,
-        ], { timeout: 60_000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
+        ], { timeout: timeoutMs, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
             if (error) return reject(createYtDlpError(error, stderr));
             let info;
             try {
-                info = parseYtDlpJson(stdout, 'O yt-dlp retornou dados inválidos para a música.');
+                const parsed = parseYtDlpJson(stdout, 'O extrator retornou dados inválidos para a música.');
+                info = getFirstMediaEntry(parsed);
             } catch (parseError) {
                 return reject(parseError);
             }
-
-            let streamData;
             try {
-                streamData = getSelectedStreamData(info);
+                const streamData = getSelectedStreamData(info);
+                return resolve({
+                    title: info.title ?? 'Desconhecido',
+                    duration: info.duration ?? 0,
+                    thumbnail: info.thumbnail ?? null,
+                    url: info.webpage_url ?? query,
+                    uploader: info.uploader ?? 'Desconhecido',
+                    platform: getSongPlatform(info),
+                    formattedDuration: formatDuration(info.duration ?? 0),
+                    ...streamData,
+                    resolvedAt: Date.now(),
+                    user: null, // preenchido depois
+                });
             } catch (streamError) {
                 return reject(streamError);
             }
-
-            return resolve({
-                title: info.title ?? 'Desconhecido',
-                duration: info.duration ?? 0,
-                thumbnail: info.thumbnail ?? null,
-                url: info.webpage_url ?? query,
-                uploader: info.uploader ?? 'Desconhecido',
-                platform: getSongPlatform(info),
-                formattedDuration: formatDuration(info.duration ?? 0),
-                ...streamData,
-                resolvedAt: Date.now(),
-                user: null, // preenchido depois
-            });
         });
     });
+}
+
+function searchYouTubeCandidates(query, options = {}) {
+    const {
+        limit = SPOTIFY_SEARCH_LIMIT,
+        execute = execFile,
+    } = options;
+    const safeLimit = Math.max(1, Math.min(20, Math.floor(limit)));
+    return new Promise((resolve, reject) => {
+        execute(YT_DLP_PATH, [
+            '--ignore-config',
+            '--js-runtimes', `node:${process.execPath}`,
+            '--flat-playlist',
+            '--dump-single-json',
+            '--no-warnings',
+            '--quiet',
+            `ytsearch${safeLimit}:${query}`,
+        ], { timeout: 30_000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
+            if (error) return reject(createYtDlpError(error, stderr));
+            try {
+                const parsed = parseYtDlpJson(stdout, 'A busca ampliada retornou dados inválidos.');
+                const entries = Array.isArray(parsed.entries) ? parsed.entries : [parsed];
+                return resolve(entries.filter((entry) => getYouTubeCandidateUrl(entry)));
+            } catch (parseError) {
+                return reject(parseError);
+            }
+        });
+    });
+}
+
+async function resolveSpotifyPlayback(song, helpers = {}) {
+    const search = helpers.search ?? searchYouTubeCandidates;
+    const resolveCandidate = helpers.resolveCandidate ?? getSongInfo;
+    const query = `${song.title} ${song.uploader}`.trim();
+    const candidates = await search(query, { limit: SPOTIFY_SEARCH_LIMIT });
+    const ranked = candidates
+        .map((candidate) => ({
+            candidate,
+            url: getYouTubeCandidateUrl(candidate),
+            score: scoreYouTubeCandidate(candidate, song),
+        }))
+        .filter((item) => item.url)
+        .sort((left, right) => right.score - left.score);
+
+    let lastError = null;
+    const attempts = ranked.slice(0, SPOTIFY_CANDIDATE_ATTEMPTS);
+    const tryCandidate = async (index) => {
+        if (index >= attempts.length) return null;
+        try {
+            const item = attempts[index];
+            return await resolveCandidate(item.url, { useCookies: false, timeoutMs: 20_000 });
+        } catch (error) {
+            lastError = error;
+            return tryCandidate(index + 1);
+        }
+    };
+    const resolved = await tryCandidate(0);
+    if (resolved) return resolved;
+
+    try {
+        return await resolveCandidate(`${query} official audio`, {
+            useCookies: false,
+            timeoutMs: 30_000,
+        });
+    } catch (error) {
+        lastError = error;
+    }
+    throw lastError ?? new Error('Nenhum resultado reproduzível foi encontrado para esta faixa do Spotify.');
 }
 
 function createPlaylistQueueSongs(info, user, sourceQuery) {
@@ -365,9 +523,12 @@ function createPlaylistQueueSongs(info, user, sourceQuery) {
 
 function getPlaylistSongs(query, user) {
     return new Promise((resolve, reject) => {
+        const cookieArgs = detectMusicPlatform(query) === 'YouTube'
+            ? ['--cookies', COOKIES_PATH]
+            : [];
         execFile(YT_DLP_PATH, [
             '--ignore-config',
-            '--cookies', COOKIES_PATH,
+            ...cookieArgs,
             '--js-runtimes', `node:${process.execPath}`,
             '--flat-playlist',
             '--dump-single-json',
@@ -379,7 +540,7 @@ function getPlaylistSongs(query, user) {
             if (error) return reject(createYtDlpError(error, stderr));
             let info;
             try {
-                info = parseYtDlpJson(stdout, 'O yt-dlp retornou dados inválidos para a playlist.');
+                info = parseYtDlpJson(stdout, 'O extrator retornou dados inválidos para a playlist.');
             } catch (parseError) {
                 return reject(parseError);
             }
@@ -387,6 +548,84 @@ function getPlaylistSongs(query, user) {
                 return resolve(createPlaylistQueueSongs(info, user, query));
             } catch (playlistError) {
                 return reject(playlistError);
+            }
+        });
+    });
+}
+
+async function resolveSoundCloudUrl(query, fetcher = fetch) {
+    if (!new URL(query).hostname.toLowerCase().startsWith('on.soundcloud.com')) return query;
+    const response = await fetcher(query, { redirect: 'follow' });
+    if (!response.ok) throw new Error(`O link curto do SoundCloud respondeu com status ${response.status}.`);
+    const resolved = new URL(response.url);
+    if (!resolved.hostname.toLowerCase().endsWith('soundcloud.com')) {
+        throw new Error('O link curto não redirecionou para o SoundCloud.');
+    }
+    return resolved.toString();
+}
+
+function createSoundCloudQueueSongs(info, user) {
+    const entries = Array.isArray(info.entries) ? info.entries : [info];
+    if (entries.length > MAX_MUSIC_QUEUE_SIZE) {
+        throw new Error(`A seleção do SoundCloud possui mais de ${MAX_MUSIC_QUEUE_SIZE} faixas.`);
+    }
+
+    const songs = entries.map((entry) => {
+        const url = entry.webpage_url ?? entry.original_url ?? entry.url;
+        if (!/^https:\/\//i.test(url ?? '')) return null;
+        let streamData = { streamUrl: null, httpHeaders: {} };
+        try {
+            streamData = getSelectedStreamData(entry);
+        } catch {
+            // A URL será resolvida novamente apenas quando esta faixa for tocada.
+        }
+        const duration = Number.isFinite(entry.duration) ? entry.duration : 0;
+        return {
+            title: entry.title ?? 'Faixa do SoundCloud',
+            duration,
+            formattedDuration: formatDuration(duration),
+            thumbnail: entry.thumbnail ?? entry.thumbnails?.at(-1)?.url ?? null,
+            url,
+            uploader: entry.uploader ?? entry.creator ?? 'Artista desconhecido',
+            user,
+            platform: 'SoundCloud',
+            streamQuery: url,
+            ...streamData,
+            resolvedAt: streamData.streamUrl ? Date.now() : 0,
+            preserveMetadata: true,
+        };
+    }).filter(Boolean);
+
+    if (songs.length === 0) throw new Error('O SoundCloud não retornou faixas reproduzíveis.');
+    return songs;
+}
+
+async function getSoundCloudSongs(query, user, helpers = {}) {
+    const resolveUrl = helpers.resolveUrl ?? resolveSoundCloudUrl;
+    const execute = helpers.execFile ?? execFile;
+    const resolvedUrl = await resolveUrl(query);
+    const personalized = /\/discover\/sets\/personalized-tracks::/i.test(new URL(resolvedUrl).pathname);
+
+    return new Promise((resolve, reject) => {
+        const selectionArgs = personalized
+            ? ['--playlist-items', '1']
+            : ['--playlist-end', String(MAX_MUSIC_QUEUE_SIZE + 1)];
+        execute(YT_DLP_PATH, [
+            '--ignore-config',
+            '--js-runtimes', `node:${process.execPath}`,
+            '-f', 'bestaudio/best',
+            ...selectionArgs,
+            '--dump-single-json',
+            '--no-warnings',
+            '--quiet',
+            resolvedUrl,
+        ], { timeout: 120_000, maxBuffer: 25 * 1024 * 1024 }, (error, stdout, stderr) => {
+            if (error) return reject(createYtDlpError(error, stderr));
+            try {
+                const info = parseYtDlpJson(stdout, 'O extrator retornou dados inválidos para o SoundCloud.');
+                return resolve(createSoundCloudQueueSongs(info, user));
+            } catch (soundCloudError) {
+                return reject(soundCloudError);
             }
         });
     });
@@ -427,10 +666,21 @@ async function resolveSongStream(song, resolver = getSongInfo) {
     }
 }
 
-function prefetchNextSong(queue, resolver = getSongInfo) {
+function resolveSongForPlayback(song) {
+    const platform = getSongPlatform(song);
+    let resolver = getSongInfo;
+    if (platform === 'Spotify') resolver = () => resolveSpotifyPlayback(song);
+    else if (platform !== 'YouTube') resolver = (query) => getSongInfo(query, { useCookies: false });
+    return resolveSongStream(song, resolver);
+}
+
+function prefetchNextSong(queue, resolver = null) {
     const nextSong = queue?.songs?.[1];
     if (!nextSong || isSongStreamFresh(nextSong)) return null;
-    return resolveSongStream(nextSong, resolver).catch(() => null);
+    const resolution = resolver
+        ? resolveSongStream(nextSong, resolver)
+        : resolveSongForPlayback(nextSong);
+    return resolution.catch(() => null);
 }
 
 // ─── Stream direto da URL resolvida pelo yt-dlp ──────────────────
@@ -480,10 +730,13 @@ function createYtStream(song, spawnProcess = spawn) {
         const fallbackInput = /^https:\/\//i.test(streamQuery)
             ? streamQuery
             : `ytsearch1:${streamQuery}`;
+        const cookieArgs = getSongPlatform(song) === 'YouTube'
+            ? ['--cookies', COOKIES_PATH]
+            : [];
 
         const ytdlp = spawnProcess(YT_DLP_PATH, [
             '--ignore-config',
-            '--cookies', COOKIES_PATH,
+            ...cookieArgs,
             '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio/best',
             '--no-playlist',
@@ -495,15 +748,30 @@ function createYtStream(song, spawnProcess = spawn) {
             '-o', '-',
             fallbackInput,
         ]);
-        let fallbackFfmpeg = null;
+        const fallbackFfmpeg = spawnProcess(ffmpegPath, [
+            '-nostdin',
+            '-loglevel', 'error',
+            '-re',
+            '-i', 'pipe:0',
+            '-vn',
+            '-f', 's16le',
+            '-ar', '48000',
+            '-ac', '2',
+            'pipe:1',
+        ]);
+        let downloadBytes = 0;
         let downloadError = '';
         let decoderError = '';
         processes.ytdlp = ytdlp;
+        processes.ffmpeg = fallbackFfmpeg;
 
         const fail = (error) => {
             if (processes.cancelled || processes.failed) return;
             processes.failed = true;
-            console.error('[YouTube]', error.message);
+            const playbackError = error instanceof Error ? error : new Error(String(error));
+            playbackError.platform ??= getSongPlatform(song);
+            playbackError.track ??= String(song?.title ?? song?.name ?? 'Faixa desconhecida');
+            console.error(`[${playbackError.platform}] Falha durante a transmissão:`, playbackError);
             processes.cancel();
             if (!output.destroyed && !output.writableEnded) output.end();
         };
@@ -511,44 +779,35 @@ function createYtStream(song, spawnProcess = spawn) {
             fail(new Error('O áudio demorou demais para começar no modo compatível.'));
         }, FALLBACK_STREAM_START_TIMEOUT);
 
-        // Não abra o decodificador se o download falhou antes de entregar áudio.
-        ytdlp.stdout.once('readable', () => {
-            if (!ytdlp.stdout.readableLength || processes.cancelled) return;
-            fallbackFfmpeg = spawnProcess(ffmpegPath, [
-                '-nostdin',
-                '-loglevel', 'error',
-                '-re',
-                '-i', 'pipe:0',
-                '-vn',
-                '-f', 's16le',
-                '-ar', '48000',
-                '-ac', '2',
-                'pipe:1',
-            ]);
-            processes.ffmpeg = fallbackFfmpeg;
-            fallbackFfmpeg.stdin.on('error', () => {});
-            fallbackFfmpeg.stdout.once('data', () => {
-                processes.clearTimer(fallbackStartTimer);
-            });
-            fallbackFfmpeg.stdout.on('error', fail);
-            fallbackFfmpeg.stderr.on('data', (data) => {
-                decoderError = `${decoderError}${data}`.slice(-4_000);
-            });
-            fallbackFfmpeg.on('error', fail);
-            fallbackFfmpeg.on('close', (code) => {
-                if (processes.cancelled) return;
-                if (code !== 0) {
-                    fail(downloadError.includes('ERROR:')
-                        ? createYtDlpError(null, downloadError)
-                        : new Error(decoderError.trim() || 'O FFmpeg não conseguiu decodificar o áudio.'));
-                    return;
-                }
-                if (!output.destroyed && !output.writableEnded) output.end();
-            });
-            fallbackFfmpeg.stdout.pipe(output, { end: false });
-            ytdlp.stdout.pipe(fallbackFfmpeg.stdin);
+        ytdlp.stdout.on('data', (chunk) => {
+            downloadBytes += chunk.length;
         });
         ytdlp.stdout.on('error', fail);
+        fallbackFfmpeg.stdin.on('error', (error) => {
+            if (!processes.cancelled && !processes.failed) {
+                console.error('[FFmpeg] Erro ao receber o áudio do extrator:', error);
+            }
+        });
+        fallbackFfmpeg.stdout.once('data', () => {
+            processes.clearTimer(fallbackStartTimer);
+        });
+        fallbackFfmpeg.stdout.on('error', fail);
+        fallbackFfmpeg.stderr.on('data', (data) => {
+            decoderError = `${decoderError}${data}`.slice(-4_000);
+        });
+        fallbackFfmpeg.on('error', fail);
+        fallbackFfmpeg.on('close', (code) => {
+            if (processes.cancelled) return;
+            if (code !== 0) {
+                fail(downloadError.includes('ERROR:')
+                    ? createYtDlpError(null, downloadError)
+                    : new Error(decoderError.trim() || 'O FFmpeg não conseguiu decodificar o áudio.'));
+                return;
+            }
+            if (!output.destroyed && !output.writableEnded) output.end();
+        });
+        fallbackFfmpeg.stdout.pipe(output, { end: false });
+        ytdlp.stdout.pipe(fallbackFfmpeg.stdin);
         ytdlp.stderr.on('data', (data) => {
             downloadError = `${downloadError}${data}`.slice(-4_000);
         });
@@ -557,8 +816,8 @@ function createYtStream(song, spawnProcess = spawn) {
             if (processes.cancelled) return;
             if (code !== 0) {
                 fail(createYtDlpError(null, downloadError));
-            } else if (!fallbackFfmpeg) {
-                fail(new Error('O yt-dlp terminou sem entregar dados de áudio.'));
+            } else if (downloadBytes === 0) {
+                fail(new Error('O extrator terminou sem entregar áudio para esta faixa.'));
             }
         });
     };
@@ -593,7 +852,9 @@ function createYtStream(song, spawnProcess = spawn) {
         startFallback();
     }, DIRECT_STREAM_START_TIMEOUT);
 
-    ffmpeg.stdout.on('error', () => {});
+    ffmpeg.stdout.on('error', (error) => {
+        if (!processes.cancelled) console.error('[FFmpeg] Erro no fluxo de saída:', error);
+    });
     ffmpeg.stdout.on('data', (chunk) => {
         directBytes += chunk.length;
         processes.clearTimer(directStartTimer);
@@ -614,7 +875,12 @@ function createYtStream(song, spawnProcess = spawn) {
         } else if (!output.destroyed && !output.writableEnded) {
             if (!processes.cancelled && code !== 0) {
                 processes.failed = true;
-                console.error('[ffmpeg-direto]', directError || 'A transmissão de áudio foi interrompida.');
+                const streamError = new Error('A transmissão direta de áudio foi interrompida.');
+                streamError.code = `FFMPEG_EXIT_${code}`;
+                streamError.platform = getSongPlatform(song);
+                streamError.track = String(song?.title ?? song?.name ?? 'Faixa desconhecida');
+                if (directError.trim()) streamError.details = directError.trim();
+                console.error('[FFmpeg direto]', streamError);
             }
             output.end();
         }
@@ -764,12 +1030,9 @@ async function playNext(guildId) {
     const song = queue.songs[0];
     queue.paused = false;
 
-    const shouldResolveBeforePlayback = !song.forceCompatibleStream
-        || isSongStreamFresh(song)
-        || Boolean(song.streamResolution);
-    const currentResolution = shouldResolveBeforePlayback ? resolveSongStream(song) : null;
+    const currentResolution = resolveSongForPlayback(song);
     prefetchNextSong(queue);
-    if (currentResolution) await currentResolution;
+    await currentResolution;
     if (guildQueues.get(guildId) !== queue || queue.songs[0] !== song) return;
 
     const { stream, processes } = createYtStream(song);
@@ -799,9 +1062,10 @@ async function playNextAvailable(guildId, starter = playNext) {
         } catch (error) {
             if (guildQueues.get(guildId) !== queue || queue.songs[0] !== song) throw error;
             const title = String(song?.title ?? song?.name ?? 'Faixa desconhecida').slice(0, 120);
-            console.error(
-                `Erro ao preparar "${title}"; avançando a fila: ${error?.message ?? error}`,
-            );
+            const playbackError = error instanceof Error ? error : new Error(String(error));
+            playbackError.platform ??= getSongPlatform(song);
+            playbackError.track ??= title;
+            console.error(`Erro ao preparar "${title}"; avançando a fila:`, playbackError);
             stopProcesses(queue);
             const failedSong = queue.songs.shift();
             if (failedSong) queue.history.push(failedSong);
@@ -933,6 +1197,16 @@ async function createQueue(guild, voiceChannel) {
         await entersState(connection, VoiceConnectionStatus.Ready, 10_000);
     } catch (error) {
         safelyDestroyVoiceConnection(connection);
+        if (error?.code === 'ABORT_ERR' || error?.name === 'AbortError') {
+            const timeoutError = new Error(
+                'O Discord não concluiu a conexão com o canal de voz dentro de 10 segundos.',
+                { cause: error },
+            );
+            timeoutError.code = 'VOICE_CONNECTION_TIMEOUT';
+            timeoutError.voiceChannel = voiceChannel.id;
+            timeoutError.guild = guild.id;
+            throw timeoutError;
+        }
         throw error;
     }
 
@@ -1047,7 +1321,7 @@ async function ensureQueue(guild, voiceChannel) {
 
 async function enqueueSongs(guild, voiceChannel, songs, helpers = {}) {
     const ensure = helpers.ensureQueue ?? ensureQueue;
-    const start = helpers.playNext ?? playNext;
+    const start = helpers.playNext ?? playNextAvailable;
     const prefetch = helpers.prefetchNextSong ?? prefetchNextSong;
     const refresh = helpers.updateMessage ?? updateMessage;
     const queue = await ensure(guild, voiceChannel);
@@ -1098,12 +1372,25 @@ module.exports = {
             }
 
             const query = validateQuery(interaction.options.getString('query'));
-            const queryUrl = /^https:\/\//i.test(query) ? new URL(query) : null;
-            const isSpotify = queryUrl?.hostname.toLowerCase().includes('spotify.com');
+            const platform = detectMusicPlatform(query);
             const customQueue = guildQueues.get(interaction.guild.id);
             const activeVoiceChannelId = customQueue?.connection?.joinConfig?.channelId;
             if (activeVoiceChannelId && activeVoiceChannelId !== voiceChannel.id) {
                 return interaction.editReply('❌ Entre no mesmo canal de voz do bot para adicionar músicas.');
+            }
+
+            let songs;
+            if (platform === 'Spotify') {
+                const resolved = await resolveSpotify(query, { member: interaction.member });
+                songs = createSpotifyQueueSongs(resolved, interaction.user);
+            } else if (platform === 'SoundCloud') {
+                songs = await getSoundCloudSongs(query, interaction.user);
+            } else if (isPlaylistUrl(query)) {
+                songs = await getPlaylistSongs(query, interaction.user);
+            } else {
+                const songInfo = await getSongInfo(query, { useCookies: true });
+                songInfo.user = interaction.user;
+                songs = [songInfo];
             }
 
             if (!playerMessages.has(interaction.guild.id)) {
@@ -1114,28 +1401,20 @@ module.exports = {
                 registerPlayerMessage(interaction.guild.id, sentMessage, interaction.client);
             }
 
-            let songs;
-            if (isSpotify) {
-                const resolved = await resolveSpotify(query, { member: interaction.member });
-                songs = createSpotifyQueueSongs(resolved, interaction.user);
-            } else if (isPlaylistUrl(query)) {
-                songs = await getPlaylistSongs(query, interaction.user);
-            } else {
-                const songInfo = await getSongInfo(query);
-                songInfo.user = interaction.user;
-                songs = [songInfo];
-            }
-
             await enqueueSongs(interaction.guild, voiceChannel, songs);
             await dismissReply(interaction);
         } catch (error) {
             const ageRestricted = error?.code === 'YOUTUBE_AGE_AUTH_REQUIRED';
-            if (ageRestricted) console.error(`[YouTube] ${error.message}`);
+            const unavailable = error?.code === 'YOUTUBE_UNAVAILABLE';
+            if (ageRestricted || unavailable) console.error('[YouTube]', error);
             else console.error(error);
 
-            const response = ageRestricted
-                ? '❌ Este vídeo possui restrição de idade. Atualize o arquivo de cookies com uma conta do YouTube conectada e apta a assisti-lo.'
-                : '❌ Não foi possível carregar essa música. Confira a busca ou o link.';
+            let response = '❌ Não foi possível carregar essa música. Confira a busca ou o link.';
+            if (ageRestricted) {
+                response = '❌ Este vídeo possui restrição de idade. Atualize os cookies com uma conta apta a assisti-lo.';
+            } else if (unavailable) {
+                response = '❌ Esse vídeo do YouTube está indisponível ou foi removido.';
+            }
             if (interaction.deferred || interaction.replied) await interaction.editReply(response);
             else await interaction.reply({ content: response, flags: 64 });
         } finally {
@@ -1160,23 +1439,34 @@ module.exports = {
     stopCustomQueue,
     formatDuration,
     validateQuery,
+    getFirstMediaEntry,
     getSelectedStreamData,
+    normalizeMatchText,
+    scoreYouTubeCandidate,
+    getYouTubeCandidateUrl,
     buildFfmpegHeaders,
     createYtDlpError,
     parseYtDlpJson,
+    searchYouTubeCandidates,
+    resolveSpotifyPlayback,
     createYtStream,
     handleAudioPlayerError,
     createVoiceChannelStatus,
     setVoiceChannelStatus,
     createSpotifyQueueSongs,
+    createSoundCloudQueueSongs,
+    getSoundCloudSongs,
+    resolveSoundCloudUrl,
     createPlaylistQueueSongs,
     getPlaylistSongs,
     isPlaylistUrl,
     getSongPlatform,
+    detectMusicPlatform,
     getPlatformIcon,
     PLATFORM_EMOJIS,
     isSongStreamFresh,
     resolveSongStream,
+    resolveSongForPlayback,
     prefetchNextSong,
     resolveSpotify,
 };

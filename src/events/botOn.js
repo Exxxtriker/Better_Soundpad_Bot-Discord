@@ -27,7 +27,7 @@ function createStartupBanner(latency, serverCount, options = {}) {
         return [
             '', paint(STARTUP_BANNER, '1;33'), '',
             ...stats.map(([label, value, shade]) => paint(`${label}: ${value}`, shade)),
-            'Erros: logs/logs.txt', '',
+            'Erros: logs/log.txt', '',
         ].join('\n');
     }
 
@@ -53,7 +53,7 @@ function createStartupBanner(latency, serverCount, options = {}) {
         ...stats.map(([label, value, shade]) => row(`${label.padEnd(13)}${value}`, shade)),
         row(),
         border('├', '┤'),
-        row('ERROS        logs/logs.txt', '90'),
+        row('ERROS        logs/log.txt', '90'),
         row('Ctrl+C para encerrar', '90'),
         border('╰', '╯'),
         '',

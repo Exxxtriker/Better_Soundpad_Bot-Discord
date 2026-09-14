@@ -1,13 +1,21 @@
-const dns = require('node:dns');
-const { Client, GatewayIntentBits } = require('discord.js');
-const mongoose = require('mongoose');
-const { installErrorLogger } = require('./src/utils/errorLogger');
+/* eslint-disable import/order -- o logger precisa iniciar antes dos outros módulos da aplicação. */
+const {
+    installErrorLogger,
+    registerRuntimeErrorSources,
+    reportCriticalError,
+    writeErrorLog,
+} = require('./src/utils/errorLogger');
 const { enableErrorOnlyConsole } = require('./src/utils/errorOnlyConsole');
-const { token } = require('./config');
-const { stopActivityRotation } = require('./src/events/botOn');
 
 enableErrorOnlyConsole();
 installErrorLogger();
+
+const dns = require('node:dns');
+const { Client, GatewayIntentBits } = require('discord.js');
+const mongoose = require('mongoose');
+const { token } = require('./config');
+const { stopActivityRotation } = require('./src/events/botOn');
+/* eslint-enable import/order */
 
 const PUBLIC_DNS_SERVERS = ['1.1.1.1', '8.8.8.8'];
 const MONGO_OPTIONS = { serverSelectionTimeoutMS: 10_000 };
@@ -36,6 +44,10 @@ client.on('interactionCreate', (interaction) => {
     audioInteractionHandler(interaction).catch((error) => console.error('Erro no player de áudio:', error));
 });
 
+registerRuntimeErrorSources({
+    client,
+});
+
 const musicInteractionHandler = require('./src/handlers/musicInteractionHandler');
 
 client.on('interactionCreate', (interaction) => {
@@ -57,7 +69,13 @@ async function connectMongo() {
         const fallbackEnabled = process.env.CUSTOM_DNS !== 'false';
         if (!isSrvDnsRefusal || !fallbackEnabled) throw error;
 
-        await mongoose.disconnect().catch(() => {});
+        writeErrorLog('RECOVERED_ERROR', [
+            'Falha inicial de DNS ao conectar ao MongoDB; tentando DNS público:',
+            error,
+        ]);
+        await mongoose.disconnect().catch((disconnectError) => {
+            console.error('Erro ao preparar a nova tentativa do MongoDB:', disconnectError);
+        });
         dns.setServers(PUBLIC_DNS_SERVERS);
         await mongoose.connect(process.env.MONGO_URI, MONGO_OPTIONS);
     }
@@ -67,9 +85,10 @@ async function start() {
     try {
         if (!process.env.MONGO_URI) throw new Error('Variável de ambiente ausente: MONGO_URI');
         await connectMongo();
+        registerRuntimeErrorSources({ databaseConnection: mongoose.connection });
         await client.login(token);
     } catch (error) {
-        console.error('❌ Falha ao iniciar o bot:', error);
+        reportCriticalError('Falha ao iniciar o bot:', error);
         process.exitCode = 1;
     }
 }
@@ -78,7 +97,11 @@ async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
     stopActivityRotation(client);
-    await client.destroy();
+    try {
+        await client.destroy();
+    } catch (error) {
+        console.error('Erro ao encerrar o cliente Discord:', error);
+    }
     await mongoose.disconnect().catch((error) => console.error('Erro ao desconectar MongoDB:', error));
 }
 
