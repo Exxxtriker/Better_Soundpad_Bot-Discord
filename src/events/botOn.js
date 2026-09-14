@@ -89,22 +89,27 @@ module.exports = {
             : requestLatency;
         process.stdout.write(createStartupBanner(latency, bot.guilds.cache.size));
 
-        // Lista de atividades para alternar (sem timer)
+        // Status personalizados exibidos no balão do perfil do bot.
         const activities = [
             {
-                text: 'Desenvolvido por @Exxxtriker',
-                details: 'Competitive',
-                type: ActivityType.Listening,
+                state: '🎲 Role dados e comece sua aventura!',
+                type: ActivityType.Custom,
             },
             {
-                text: `${bot.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0)} Users | ${bot.guilds.cache.size} Servers`,
-                details: 'Active on Multiple Servers',
-                type: ActivityType.Listening,
+                state: '🎵 Música para suas campanhas',
+                type: ActivityType.Custom,
             },
             {
-                text: 'Use /help for commands',
-                details: 'Competitive',
-                type: ActivityType.Listening,
+                state: '💞 Haruka Harano',
+                type: ActivityType.Custom,
+            },
+            {
+                state: '⚒️ Feito por @Exxxtriker',
+                type: ActivityType.Custom,
+            },
+            {
+                state: '⚔️ Use /help',
+                type: ActivityType.Custom,
             },
         ];
 
@@ -116,9 +121,13 @@ module.exports = {
             const activity = activities[currentIndex];
 
             try {
-                bot.user.setActivity(activity.text, {
-                    type: activity.type,
-                    details: activity.details,
+                bot.user.setPresence({
+                    status: 'online',
+                    activities: [{
+                        name: 'Custom Status',
+                        state: activity.state,
+                        type: activity.type,
+                    }],
                 });
             } catch (error) {
                 if (!isMissingShardError(error)) {
@@ -131,9 +140,9 @@ module.exports = {
             currentIndex = (currentIndex + 1) % activities.length;
         }
 
-        // Atualiza a atividade a cada 10 segundos
+        // Atualiza a atividade a cada 25 segundos.
         stopActivityRotation(bot);
-        const activityInterval = setInterval(updateActivity, 10000); // A cada 10 segundos
+        const activityInterval = setInterval(updateActivity, 25000);
         activityInterval.unref();
         activityIntervals.set(bot, activityInterval);
 
