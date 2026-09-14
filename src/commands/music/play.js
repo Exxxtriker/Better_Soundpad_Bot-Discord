@@ -12,6 +12,7 @@ const path = require('path');
 const { PassThrough } = require('stream');
 const ffmpegPath = require('ffmpeg-static');
 const activePlayers = require('../../handlers/activePlayers');
+const { writeErrorLog } = require('../../utils/errorLogger');
 const { safelyDestroyVoiceConnection } = require('../../utils/voiceConnection');
 const { createVoiceSessionGuard } = require('../../utils/voiceSessionGuard');
 
@@ -21,8 +22,10 @@ const STREAM_URL_MAX_AGE = 4 * 60 * 60 * 1000;
 const DIRECT_STREAM_START_TIMEOUT = 8_000;
 const FALLBACK_STREAM_START_TIMEOUT = 20_000;
 const STREAM_BUFFER_SIZE = 512 * 1024;
+const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
 const SPOTIFY_SEARCH_LIMIT = 8;
 const SPOTIFY_CANDIDATE_ATTEMPTS = 4;
+const SPOTIFY_SOURCE_RECOVERY_ATTEMPTS = 2;
 const DEFAULT_MUSIC_VOLUME = 100;
 const MAX_MUSIC_QUEUE_SIZE = 1_000;
 const MAX_VOICE_STATUS_LENGTH = 500;
@@ -297,11 +300,43 @@ function getYouTubeCandidateUrl(candidate) {
     return videoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}` : null;
 }
 
+function getMediaSourceKey(source) {
+    try {
+        const parsed = new URL(source);
+        const hostname = parsed.hostname.toLowerCase();
+        if (hostname === 'youtu.be') {
+            return `youtube:${parsed.pathname.split('/').filter(Boolean)[0] ?? source}`;
+        }
+        if (hostname.endsWith('youtube.com')) {
+            return `youtube:${parsed.searchParams.get('v') ?? source}`;
+        }
+        return parsed.toString();
+    } catch {
+        return String(source ?? '');
+    }
+}
+
+function isRecoverableStreamError(error) {
+    const details = [error?.message, error?.details, error?.cause?.message]
+        .filter(Boolean)
+        .join('\n');
+    return /(?:HTTP Error 403|\b403 Forbidden\b|bytes read, .* more expected|premature close|ECONNRESET|ETIMEDOUT|socket hang up)/i
+        .test(details);
+}
+
 function buildFfmpegHeaders(headers = {}) {
     return Object.entries(headers)
         .filter(([name, value]) => name && typeof value === 'string' && !/[\r\n]/.test(`${name}${value}`))
         .map(([name, value]) => `${name}: ${value}\r\n`)
         .join('');
+}
+
+function isDecodedAudioComplete(song, decodedBytes) {
+    const expectedDuration = Number(song?.duration);
+    if (!Number.isFinite(expectedDuration) || expectedDuration <= 0) return false;
+    const decodedDuration = decodedBytes / PCM_BYTES_PER_SECOND;
+    const allowedDifference = Math.max(5, expectedDuration * 0.03);
+    return decodedDuration >= expectedDuration - allowedDifference;
 }
 
 function createYtDlpError(error, stderr = '') {
@@ -451,13 +486,14 @@ async function resolveSpotifyPlayback(song, helpers = {}) {
     const resolveCandidate = helpers.resolveCandidate ?? getSongInfo;
     const query = `${song.title} ${song.uploader}`.trim();
     const candidates = await search(query, { limit: SPOTIFY_SEARCH_LIMIT });
+    const failedSources = new Set(song.failedStreamSources ?? []);
     const ranked = candidates
         .map((candidate) => ({
             candidate,
             url: getYouTubeCandidateUrl(candidate),
             score: scoreYouTubeCandidate(candidate, song),
         }))
-        .filter((item) => item.url)
+        .filter((item) => item.url && !failedSources.has(getMediaSourceKey(item.url)))
         .sort((left, right) => right.score - left.score);
 
     let lastError = null;
@@ -476,10 +512,18 @@ async function resolveSpotifyPlayback(song, helpers = {}) {
     if (resolved) return resolved;
 
     try {
-        return await resolveCandidate(`${query} official audio`, {
+        const finalCandidate = await resolveCandidate(`${query} official audio`, {
             useCookies: false,
             timeoutMs: 30_000,
         });
+        if (failedSources.has(getMediaSourceKey(finalCandidate.url))) {
+            const repeatedSourceError = new Error(
+                'A busca retornou novamente uma fonte de áudio que já havia falhado.',
+            );
+            repeatedSourceError.code = 'SPOTIFY_REPEATED_SOURCE';
+            throw repeatedSourceError;
+        }
+        return finalCandidate;
     } catch (error) {
         lastError = error;
     }
@@ -716,6 +760,20 @@ function createYtStream(song, spawnProcess = spawn) {
             this.ffmpeg?.kill();
         },
     };
+    const registerPlaybackFailure = (error) => {
+        const playbackError = error instanceof Error ? error : new Error(String(error));
+        playbackError.platform ??= getSongPlatform(song);
+        playbackError.track ??= String(song?.title ?? song?.name ?? 'Faixa desconhecida');
+        const deferLogging = playbackError.platform === 'Spotify'
+            && isRecoverableStreamError(playbackError);
+        processes.failed = true;
+        processes.failure = playbackError;
+        processes.failureLogged = !deferLogging;
+        if (!deferLogging) {
+            console.error(`[${playbackError.platform}] Falha durante a transmissão:`, playbackError);
+        }
+        return playbackError;
+    };
     let directBytes = 0;
     let directError = '';
     let directFinished = false;
@@ -730,7 +788,7 @@ function createYtStream(song, spawnProcess = spawn) {
         const fallbackInput = /^https:\/\//i.test(streamQuery)
             ? streamQuery
             : `ytsearch1:${streamQuery}`;
-        const cookieArgs = getSongPlatform(song) === 'YouTube'
+        const cookieArgs = detectMusicPlatform(fallbackInput) === 'YouTube'
             ? ['--cookies', COOKIES_PATH]
             : [];
 
@@ -740,9 +798,13 @@ function createYtStream(song, spawnProcess = spawn) {
             '--js-runtimes', `node:${process.execPath}`,
             '-f', 'bestaudio/best',
             '--no-playlist',
-            '--socket-timeout', '15',
-            '--retries', '2',
-            '--fragment-retries', '2',
+            '--socket-timeout', '20',
+            '--retries', '8',
+            '--fragment-retries', '8',
+            '--extractor-retries', '3',
+            '--file-access-retries', '3',
+            '--retry-sleep', 'http:1',
+            '--retry-sleep', 'fragment:1',
             '--no-warnings',
             '--quiet',
             '-o', '-',
@@ -760,6 +822,9 @@ function createYtStream(song, spawnProcess = spawn) {
             'pipe:1',
         ]);
         let downloadBytes = 0;
+        let decodedBytes = 0;
+        let downloadExitCode;
+        let decoderExitCode;
         let downloadError = '';
         let decoderError = '';
         processes.ytdlp = ytdlp;
@@ -767,17 +832,30 @@ function createYtStream(song, spawnProcess = spawn) {
 
         const fail = (error) => {
             if (processes.cancelled || processes.failed) return;
-            processes.failed = true;
-            const playbackError = error instanceof Error ? error : new Error(String(error));
-            playbackError.platform ??= getSongPlatform(song);
-            playbackError.track ??= String(song?.title ?? song?.name ?? 'Faixa desconhecida');
-            console.error(`[${playbackError.platform}] Falha durante a transmissão:`, playbackError);
+            registerPlaybackFailure(error);
             processes.cancel();
             if (!output.destroyed && !output.writableEnded) output.end();
         };
         const fallbackStartTimer = processes.setTimer(() => {
             fail(new Error('O áudio demorou demais para começar no modo compatível.'));
         }, FALLBACK_STREAM_START_TIMEOUT);
+        const finishFallback = () => {
+            if (
+                processes.cancelled
+                || downloadExitCode === undefined
+                || decoderExitCode === undefined
+            ) return;
+
+            const incompleteDownload = downloadExitCode !== 0
+                && !isDecodedAudioComplete(song, decodedBytes);
+            if (decoderExitCode !== 0 || incompleteDownload) {
+                fail(downloadError.includes('ERROR:')
+                    ? createYtDlpError(null, downloadError)
+                    : new Error(decoderError.trim() || 'O FFmpeg não conseguiu decodificar o áudio.'));
+                return;
+            }
+            if (!output.destroyed && !output.writableEnded) output.end();
+        };
 
         ytdlp.stdout.on('data', (chunk) => {
             downloadBytes += chunk.length;
@@ -791,6 +869,9 @@ function createYtStream(song, spawnProcess = spawn) {
         fallbackFfmpeg.stdout.once('data', () => {
             processes.clearTimer(fallbackStartTimer);
         });
+        fallbackFfmpeg.stdout.on('data', (chunk) => {
+            decodedBytes += chunk.length;
+        });
         fallbackFfmpeg.stdout.on('error', fail);
         fallbackFfmpeg.stderr.on('data', (data) => {
             decoderError = `${decoderError}${data}`.slice(-4_000);
@@ -798,13 +879,8 @@ function createYtStream(song, spawnProcess = spawn) {
         fallbackFfmpeg.on('error', fail);
         fallbackFfmpeg.on('close', (code) => {
             if (processes.cancelled) return;
-            if (code !== 0) {
-                fail(downloadError.includes('ERROR:')
-                    ? createYtDlpError(null, downloadError)
-                    : new Error(decoderError.trim() || 'O FFmpeg não conseguiu decodificar o áudio.'));
-                return;
-            }
-            if (!output.destroyed && !output.writableEnded) output.end();
+            decoderExitCode = code;
+            finishFallback();
         });
         fallbackFfmpeg.stdout.pipe(output, { end: false });
         ytdlp.stdout.pipe(fallbackFfmpeg.stdin);
@@ -814,10 +890,13 @@ function createYtStream(song, spawnProcess = spawn) {
         ytdlp.on('error', fail);
         ytdlp.on('close', (code) => {
             if (processes.cancelled) return;
-            if (code !== 0) {
+            downloadExitCode = code;
+            if (code !== 0 && downloadBytes === 0) {
                 fail(createYtDlpError(null, downloadError));
             } else if (downloadBytes === 0) {
                 fail(new Error('O extrator terminou sem entregar áudio para esta faixa.'));
+            } else {
+                finishFallback();
             }
         });
     };
@@ -880,7 +959,7 @@ function createYtStream(song, spawnProcess = spawn) {
                 streamError.platform = getSongPlatform(song);
                 streamError.track = String(song?.title ?? song?.name ?? 'Faixa desconhecida');
                 if (directError.trim()) streamError.details = directError.trim();
-                console.error('[FFmpeg direto]', streamError);
+                registerPlaybackFailure(streamError);
             }
             output.end();
         }
@@ -1137,7 +1216,6 @@ function createSpotifyQueueSongs(resolved, user) {
             httpHeaders: {},
             resolvedAt: 0,
             preserveMetadata: true,
-            forceCompatibleStream: true,
         };
     });
 }
@@ -1145,6 +1223,23 @@ function createSpotifyQueueSongs(resolved, user) {
 function isMusicActive(guildId) {
     return pendingPlayRequests.has(guildId)
         || guildQueues.has(guildId);
+}
+
+function prepareSpotifySourceRecovery(song, error) {
+    if (getSongPlatform(song) !== 'Spotify' || !isRecoverableStreamError(error)) return false;
+    const attempts = Number(song.streamRecoveryAttempts ?? 0);
+    if (attempts >= SPOTIFY_SOURCE_RECOVERY_ATTEMPTS) return false;
+
+    const failedSources = new Set(song.failedStreamSources ?? []);
+    const failedSource = getMediaSourceKey(song.streamQuery);
+    if (failedSource) failedSources.add(failedSource);
+    song.failedStreamSources = [...failedSources];
+    song.streamRecoveryAttempts = attempts + 1;
+    song.streamUrl = null;
+    song.httpHeaders = {};
+    song.resolvedAt = 0;
+    delete song.streamResolution;
+    return true;
 }
 
 async function stopCustomQueue(guildId) {
@@ -1251,8 +1346,26 @@ async function createQueue(guild, voiceChannel) {
 
             q.transitioning = true;
             try {
-                const playbackFailed = q.currentProcesses?.failed;
+                const failedProcesses = q.currentProcesses;
+                const playbackFailed = failedProcesses?.failed;
+                const failedSong = q.songs[0];
+                const shouldRecoverSource = playbackFailed
+                    && prepareSpotifySourceRecovery(failedSong, failedProcesses.failure);
                 stopProcesses(q);
+                if (shouldRecoverSource) {
+                    writeErrorLog('RECOVERED_ERROR', [
+                        `[Spotify] Fonte recusada; buscando alternativa (${failedSong.streamRecoveryAttempts}/${SPOTIFY_SOURCE_RECOVERY_ATTEMPTS}):`,
+                        failedProcesses.failure,
+                    ]);
+                    await playNextAvailable(guild.id);
+                    return;
+                }
+                if (playbackFailed && failedProcesses.failure && !failedProcesses.failureLogged) {
+                    console.error(
+                        '[Spotify] Todas as fontes alternativas de áudio falharam:',
+                        failedProcesses.failure,
+                    );
+                }
                 if (!playbackFailed && q.loop === 'queue' && q.songs.length > 0) {
                     q.songs.push(q.songs.shift());
                 } else if (playbackFailed || q.loop !== 'song') {
@@ -1444,7 +1557,10 @@ module.exports = {
     normalizeMatchText,
     scoreYouTubeCandidate,
     getYouTubeCandidateUrl,
+    getMediaSourceKey,
+    isRecoverableStreamError,
     buildFfmpegHeaders,
+    isDecodedAudioComplete,
     createYtDlpError,
     parseYtDlpJson,
     searchYouTubeCandidates,
@@ -1454,6 +1570,7 @@ module.exports = {
     createVoiceChannelStatus,
     setVoiceChannelStatus,
     createSpotifyQueueSongs,
+    prepareSpotifySourceRecovery,
     createSoundCloudQueueSongs,
     getSoundCloudSongs,
     resolveSoundCloudUrl,
