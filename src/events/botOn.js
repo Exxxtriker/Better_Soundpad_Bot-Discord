@@ -101,6 +101,11 @@ module.exports = {
                 details: 'Active on Multiple Servers',
                 type: ActivityType.Listening,
             },
+            {
+                text: 'Use /help for commands',
+                details: 'Competitive',
+                type: ActivityType.Listening,
+            },
         ];
 
         let currentIndex = 0; // Inicia o índice da rotação de atividades
