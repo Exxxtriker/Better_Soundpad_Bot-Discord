@@ -1,96 +1,203 @@
-#  Better Soundpad Bot — Discord
+# O melhor bot para sua mesa de RPG
 
-Um bot para Discord que funciona como um **sound-pad**, permitindo:
+## Gideon the Bard
 
-- Baixar músicas diretamente do YouTube  
-- Fazer upload de arquivos de áudio localmente  
-- Navegar por um menu interativo para escolher sons
-- Sistema de pontos e nível via MongoDB
-- Sistema de emojis da aplicação 
+```text
+┏┓• ┓        ┏┳┓┓     ┓      ┓
+┃┓┓┏┫┏┓┏┓┏┓   ┃ ┣┓┏┓  ┣┓┏┓┏┓┏┫
+┗┛┗┗┻┗ ┗┛┛┗   ┻ ┛┗┗   ┗┛┗┻┛ ┗┻
+```
 
----
+Gideon é um bot multitarefa para Discord criado para acompanhar campanhas de RPG. Ele reúne música, soundboard, rolagem de dados, progressão por servidor, economia e um minigame de cartas colecionáveis.
 
-##  Tabela de Conteúdo
+## Recursos principais
 
-- [Visão Geral](#visão-geral)  
-- [Funcionalidades](#funcionalidades)  
-- [Tecnologias Utilizadas](#tecnologias-utilizadas)  
-- [Instalação](#instalação)  
-- [Configuração](#configuração)  
+- Música e playlists de YouTube, Spotify e SoundCloud em uma fila unificada.
+- Player interativo com pausa, avanço, retorno, loop e volume.
+- Soundboard organizado por categorias para efeitos, memes e trilhas locais.
+- Rolagem segura de dados por `/roll` ou por expressões como `1d20+7` no chat.
+- XP, níveis, Renome e moedas concedidos pelas ações realizadas no bot.
+- Perfis, inventários e economia independentes em cada servidor.
+- Mercador com estoque exclusivo por servidor e renovação diária.
+- Cartas de classes, raças, terrenos, personagens, divindades e magias.
+- Exemplares únicos identificados por número de série, raridade e **Float**.
+- Álbuns, pacotes, combinações, trocas, vendas, descrições e casamento de cartas.
+- Menus e carrosséis centralizados para respostas rápidas.
+- Registro de erros em `logs/log.txt`, com remoção automática de credenciais.
+- Status personalizado rotativo e painel medieval no terminal.
 
----
+## Comandos
 
-##  Visão Geral
+### Música e áudio
 
-Este bot traz toda a diversão de um sound-pad para o Discord. Com suporte a download do YouTube e upload manual de áudio, tudo controlado por um menu interativo para facilitar o uso em tempo real.
+| Comando | Função |
+| --- | --- |
+| `/play` | Reproduz uma música, busca ou playlist de YouTube, Spotify ou SoundCloud. |
+| `/audio` | Abre o catálogo de áudios locais separado por categorias. |
+| `/uploadaudio` | Adiciona um arquivo ao soundboard. Requer **Gerenciar Servidor**. |
+| `/ytmp3` | Baixa um áudio do YouTube para o catálogo. Requer **Gerenciar Servidor**. |
+| `/audiosize` | Mostra o espaço utilizado pelo catálogo local. |
 
----
+`/play` e `/audio` são mutuamente exclusivos em cada servidor: enquanto um player estiver ativo, o outro ficará bloqueado. O bot encerra a sessão e o menu quando a fila fica inativa ou não existem mais usuários no canal de voz.
 
-##  Funcionalidades
+### RPG, perfil e economia
 
--  **Download de música do YouTube**  
-  Permite adicionar e reproduzir faixas diretamente da internet.
+| Comando | Função |
+| --- | --- |
+| `/roll` | Rola expressões de dados e exibe dados, modificadores e total. |
+| `1d20+7` no chat | Detecta e executa automaticamente uma expressão de dados. |
+| `/perfil` | Exibe a ficha, nível, XP, moedas, Renome e resumo da coleção. |
+| `/customizar` | Personaliza cor, título, lema e brasão do perfil. |
+| `/daily` | Recebe a recompensa diária. |
+| `/pagar` | Transfere moedas para outro jogador do servidor. |
+| `/mercador` | Abre as alas de itens de perfil e de cartas. |
 
--  **Upload de arquivos locais**  
-  Carregue seus próprios sons para armazenar e reproduzir com facilidade.
+O mercador renova seu estoque à **00:00 no horário de Brasília**. Itens limitados ficam indisponíveis naquele servidor depois da compra até a próxima renovação.
 
--  **Menu interativo**  
-  Navegue pelas opções de reprodução utilizando um sistema de comandos claras e intuitivas.
+### Coleção de cartas
 
+| Comando | Função |
+| --- | --- |
+| `/pack` | Abre duas cartas colecionáveis e um Coringa cerimonial não contabilizado. |
+| `/cartas` | Percorre em carrossel todas as cartas de um jogador. |
+| `/carta ver` | Mostra todos os detalhes de um exemplar. |
+| `/carta descrever` | Usa um pergaminho para adicionar uma descrição pessoal. |
+| `/carta casar` | Usa um anel para criar um vínculo com a carta. |
+| `/carta organizar` | Define a ordem padrão do álbum. |
+| `/codice` | Mostra todas as cartas existentes no jogo, com filtros. |
+| `/combinar` | Consome duas cópias e tenta melhorar a raridade ou rerrolar o Float. |
+| `/tradecard` | Propõe uma troca de cartas entre jogadores. |
+| `/vendercarta` | Vende um exemplar ao mercador pelo valor calculado. |
 
----
+Cada cópia possui um **Float** próprio. Quanto menor o Float, melhor é o estado de conservação e maior tende a ser o valor. Cartas casadas ficam protegidas e não podem ser vendidas, trocadas ou combinadas.
 
-##  Tecnologias Utilizadas
+Os pacotes possuem probabilidades próprias por categoria e raridade. Pacotes especializados aumentam a chance de obter cartas do tema correspondente sem eliminar o equilíbrio geral da coleção.
 
-- **Linguagem:** JavaScript (100 %)
-- **Arquivos principais:**
-  - `app.js` — lógica central do bot  
-  - `config.js` — configurações (tokens, IDs de servidor, etc.)  
-  - `slashBuilder.js` — publicação manual dos comandos via barra (slash commands)
-- **Outros arquivos:**
-  - `.eslintrc.json` — regras de linting  
-  - `package.json` + `package-lock.json` — dependências e meta informações do projeto  
-  - `.gitignore` — arquivos ignorados no controle de versão  
-  - `src/` — possível pasta com código adicional ou estrutura modular
+### Utilidades e administração
 
----
+| Comando | Função |
+| --- | --- |
+| `/help` | Abre o manual completo do Gideon por categorias. |
+| `/ping` | Verifica se o bot está respondendo. |
+| `/clear` | Apaga mensagens recentes. Requer **Gerenciar Mensagens**. |
+| `/emoji` | Lista, envia ou apaga emojis da aplicação; restrito ao dono do bot. |
+
+## Requisitos
+
+- [Node.js](https://nodejs.org/) 20 ou superior.
+- Uma aplicação configurada no [Discord Developer Portal](https://discord.com/developers/applications).
+- Uma instância do MongoDB, local ou no MongoDB Atlas.
+- No Windows, permissão para executar o `yt-dlp.exe` incluído no projeto.
+- Credenciais da API do Spotify são recomendadas para playlists e metadados completos.
+
+No Developer Portal, habilite o intent **Message Content** para permitir a detecção automática de expressões de dados no chat. Na instalação do app, mantenha os escopos `bot` e `applications.commands`.
 
 ## Instalação
-Para hospedar o bot localmente:
-```bash
-# Clone o repositório
-git clone https://github.com/Exxxtriker/Better_Soundpad_Bot-Discord.git
+
+```powershell
+# Entre na pasta do projeto
+cd Bot
 
 # Instale as dependências
 npm install
 
-# Configure o arquivo .env com suas credenciais
-
-# Publique os comandos após instalar ou alterar um comando
+# Publique os slash commands globais
 npm run deploy:commands
 
-# Inicie o bot
+# Inicie o Gideon
 npm start
 ```
 
+O processo normal de inicialização não republica os comandos. Execute `npm run deploy:commands` quando adicionar, remover ou modificar a definição de um slash command.
+
 ## Configuração
-- Crie um arquivo `.env` com `TOKEN`, `CLIENT_ID` e `MONGO_URI`.
-- `APPLICATION_ID` é opcional; o comando de emojis usa o ID da aplicação conectada como alternativa.
-- `SPOTIFY_CLIENT_ID` e `SPOTIFY_CLIENT_SECRET` habilitam a API oficial do Spotify e playlists com mais de 100 faixas.
-- `RADIO_OWNER_ID` pode definir quem usa `/radio`.
-- O bot usa DNS público automaticamente se o DNS do sistema recusar a consulta SRV do MongoDB.
-- `CUSTOM_DNS=true` força DNS público desde o início; `CUSTOM_DNS=false` desabilita o fallback.
-- `/uploadaudio` e `/ytmp3` exigem a permissão **Gerenciar Servidor** e limitam arquivos a 25 MB.
 
-## Desenvolvimento
+Crie um arquivo `.env` na raiz do projeto:
 
-```bash
-npm run dev       # reinicia ao detectar alterações
-npm test          # executa lint e valida os slash commands
+```dotenv
+TOKEN=token_do_bot
+CLIENT_ID=id_da_aplicacao
+MONGO_URI=mongodb+srv://usuario:senha@cluster/banco
+
+# Opcionais
+APPLICATION_ID=id_da_aplicacao
+SPOTIFY_CLIENT_ID=
+SPOTIFY_CLIENT_SECRET=
+CUSTOM_DNS=true
+YOUTUBE_COOKIES_BROWSER=edge:Default
+YOUTUBE_YTDLP_PATH=
 ```
 
-O processo normal de inicialização não republica comandos. Use `npm run deploy:commands`
-somente quando a definição de algum slash command mudar.
+| Variável | Obrigatória | Descrição |
+| --- | --- | --- |
+| `TOKEN` | Sim | Token de autenticação do bot. |
+| `CLIENT_ID` | Sim | ID da aplicação usado para publicar os comandos. |
+| `MONGO_URI` | Sim | String de conexão do MongoDB. |
+| `APPLICATION_ID` | Não | ID usado pelo gerenciador de emojis; usa a aplicação conectada como alternativa. |
+| `SPOTIFY_CLIENT_ID` | Não | Client ID da API oficial do Spotify. |
+| `SPOTIFY_CLIENT_SECRET` | Não | Client secret da API oficial do Spotify. |
+| `CUSTOM_DNS` | Não | `true` força DNS público; `false` desativa o fallback de DNS do MongoDB. |
+| `YOUTUBE_COOKIES_BROWSER` | Não | Navegador e perfil usados para exportar cookies. Padrão: `edge:Default`. |
+| `YOUTUBE_YTDLP_PATH` | Não | Caminho alternativo para o executável do yt-dlp. |
+| `NO_COLOR` | Não | Desativa as cores ANSI do painel do terminal. |
 
-Se o Windows bloquear `yt-dlp.exe`, abra as propriedades do arquivo, marque **Desbloquear**
-e aplique a alteração antes de iniciar o bot.
+Nunca publique `.env`, tokens, credenciais do MongoDB ou cookies do navegador. Esses arquivos já estão cobertos pelo `.gitignore` do projeto.
+
+## Vídeos com restrição de idade
+
+Faça login no YouTube pelo navegador configurado, feche-o completamente e execute:
+
+```powershell
+npm run cookies:youtube
+```
+
+O comando mantém somente cookies dos domínios YouTube e Google e grava o resultado em `src/commands/commands-audios/cookies.txt`. O arquivo é local e não será enviado ao Git.
+
+Se o Windows bloquear o executável, abra as propriedades de `src/commands/commands-audios/yt-dlp.exe`, marque **Desbloquear** e aplique a alteração.
+
+## Scripts de desenvolvimento
+
+| Script | Função |
+| --- | --- |
+| `npm start` | Inicia o bot. |
+| `npm run dev` | Inicia com reinicialização automática pelo Nodemon. |
+| `npm run deploy:commands` | Publica a lista atual de slash commands globais. |
+| `npm run validate` | Valida carregamento, nomes duplicados e estrutura dos comandos. |
+| `npm run lint` | Executa o ESLint no projeto. |
+| `npm run cookies:youtube` | Atualiza os cookies locais utilizados pelo yt-dlp. |
+
+Antes de enviar alterações ao Git:
+
+```powershell
+npm run validate
+npm run lint
+```
+
+## Diagnóstico
+
+- Erros de execução são gravados em `logs/log.txt`.
+- Segredos conhecidos são substituídos por `[SEGREDO_REMOVIDO]` antes da gravação.
+- Se o MongoDB retornar `querySrv ECONNREFUSED`, o bot tenta novamente com DNS público, exceto quando `CUSTOM_DNS=false`.
+- Falhas temporárias de transmissão podem ser recuperadas pelo motor de música; somente erros relevantes devem chegar ao log.
+
+## Estrutura resumida
+
+```text
+Bot/
+├── app.js                       # Inicialização, MongoDB e handlers globais
+├── config.js                    # Validação das credenciais principais
+├── slashBuilder.js              # Publicação dos slash commands
+├── scripts/                     # Validação e cookies do YouTube
+├── logs/                        # Registro local de erros
+└── src/
+    ├── assets/cards/            # Artes das cartas
+    ├── commands/                # Comandos de RPG, áudio e música
+    ├── events/                  # Eventos do Discord
+    ├── handlers/                # Botões, carrosséis e sessões
+    ├── models/                  # Modelos MongoDB
+    └── utils/                   # Catálogo, DNS, logs e perfis
+```
+
+## Licença
+
+Distribuído sob a licença ISC.
