@@ -82,7 +82,7 @@ const HELP_PAGES = [
         title: '🎲 Dados e administração',
         description: [
             '`/roll` — Rola dados ou calcula expressões matemáticas.',
-            '`1d20+7`, `10+10` ou `85+50%` no chat — Detecta e resolve automaticamente.',
+            '`1d20+7`, `1d20+50%` ou `10x10+78` no chat — Detecta e resolve automaticamente.',
             '`/ping` — Mostra se Gideon está respondendo.',
             '`/clear` — Limpa mensagens; exige Gerenciar Mensagens.',
             '`/uploadaudio` — Envia um áudio; exige Gerenciar Servidor.',

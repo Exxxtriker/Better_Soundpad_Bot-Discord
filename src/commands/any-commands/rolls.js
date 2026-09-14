@@ -22,11 +22,11 @@ function parseExpression(rawInput) {
         throw new Error(`Use entre 1 e ${MAX_REPETITIONS} repetições.`);
     }
 
-    if (!/^[+-]?(?:\d*d\d+|\d+)(?:[+-](?:\d*d\d+|\d+))*$/i.test(expression)) {
-        throw new Error('Expressão inválida. Exemplo: 3d6+2 ou 4#1d20+5.');
+    if (!/^[+-]?(?:\d*d\d+|\d+)(?:[+-](?:\d*d\d+|\d+%?))*$/i.test(expression)) {
+        throw new Error('Expressão inválida. Exemplo: 3d6+2, 1d20+50% ou 4#1d20+5.');
     }
 
-    const terms = expression.match(/[+-]?(?:\d*d\d+|\d+)/gi) ?? [];
+    const terms = expression.match(/[+-]?(?:\d*d\d+|\d+%?)/gi) ?? [];
     if (terms.length > MAX_TERMS) throw new Error(`Use no máximo ${MAX_TERMS} termos.`);
 
     return { repeat, terms };
@@ -42,6 +42,14 @@ function rollTerm(rawTerm, randomInteger = randomInt) {
     const diceMatch = term.match(/^(\d*)d(\d+)$/i);
 
     if (!diceMatch) {
+        if (term.endsWith('%')) {
+            const percentage = Number.parseInt(term.slice(0, -1), 10);
+            if (!Number.isSafeInteger(percentage)) throw new Error('Porcentagem muito grande.');
+            return {
+                percentage: negative ? -percentage : percentage,
+                display: `${negative ? '-' : ''}${percentage}%`,
+            };
+        }
         const value = Number.parseInt(term, 10);
         if (!Number.isSafeInteger(value)) throw new Error('Modificador numérico muito grande.');
         return { total: negative ? -value : value, display: `${negative ? '-' : ''}${value}` };
@@ -174,7 +182,7 @@ function parseArithmeticExpression(rawInput) {
 function isDiceExpression(rawInput) {
     if (typeof rawInput !== 'string' || rawInput.length > MAX_EXPRESSION_LENGTH) return false;
     const compact = rawInput.trim().replace(/\s/g, '');
-    if (/d/i.test(compact)) return /^[\dd#+-]+$/i.test(compact);
+    if (/d/i.test(compact)) return /^[\dd#+%+-]+$/i.test(compact);
 
     // Números soltos não ativam o bot; deve existir ao menos uma operação.
     if (!/[+\-xX*×/÷%]/.test(compact)) return false;
@@ -241,8 +249,16 @@ function rollExpression(rawInput, randomInteger = randomInt) {
 
     for (let index = 0; index < repeat; index += 1) {
         const rolledTerms = terms.map((term) => rollTerm(term, randomInteger));
-        const total = rolledTerms.reduce((sum, result) => sum + result.total, 0);
-        results.push(`\` ${total} \` ⟵ ${rolledTerms.map((result) => result.display).join(' + ')}`);
+        const total = rolledTerms.reduce((sum, result) => {
+            if (result.percentage !== undefined) return sum + (sum * result.percentage) / 100;
+            return sum + result.total;
+        }, 0);
+        const display = rolledTerms.map((result, termIndex) => {
+            if (termIndex === 0) return result.display;
+            if (result.display.startsWith('-')) return `- ${result.display.slice(1)}`;
+            return `+ ${result.display}`;
+        }).join(' ');
+        results.push(`\` ${formatArithmeticNumber(total)} \` ⟵ ${display}`);
     }
 
     const content = results.join('\n');

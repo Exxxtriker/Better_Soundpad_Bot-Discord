@@ -45,7 +45,7 @@ Gideon é um bot multitarefa para Discord criado para acompanhar campanhas de RP
 | Comando | Função |
 | --- | --- |
 | `/roll` | Rola dados ou calcula uma expressão matemática. |
-| Expressão no chat | Detecta mensagens como `1d20+7`, `10+10`, `85+50%` e `10x10+78`. |
+| Expressão no chat | Detecta mensagens como `1d20+7`, `1d20+50%`, `85+50%` e `10x10+78`. |
 | `/perfil` | Exibe a ficha, nível, XP, moedas, Renome e resumo da coleção. |
 | `/customizar` | Personaliza cor, título, lema e brasão do perfil. |
 | `/daily` | Recebe a recompensa diária. |
