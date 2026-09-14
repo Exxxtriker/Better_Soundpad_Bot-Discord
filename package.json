@@ -4,7 +4,7 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js",
+    "start": "cls && node app.js",
     "dev": "nodemon app.js --ignore config.json",
     "cookies:youtube": "node scripts/refreshYoutubeCookies.js",
     "deploy:commands": "node slashBuilder.js",

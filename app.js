@@ -15,15 +15,13 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const mongoose = require('mongoose');
 const { token } = require('./config');
 const { stopActivityRotation } = require('./src/events/botOn');
+const { configureDnsResolver, PUBLIC_DNS_SERVERS } = require('./src/utils/dnsResolver');
 /* eslint-enable import/order */
 
-const PUBLIC_DNS_SERVERS = ['1.1.1.1', '8.8.8.8'];
 const MONGO_OPTIONS = { serverSelectionTimeoutMS: 10_000 };
 let shuttingDown = false;
 
-if (process.env.CUSTOM_DNS === 'true') {
-    dns.setServers(PUBLIC_DNS_SERVERS);
-}
+configureDnsResolver();
 
 // Criação do client
 const client = new Client({
