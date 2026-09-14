@@ -15,7 +15,7 @@ Gideon é um bot multitarefa para Discord criado para acompanhar campanhas de RP
 - Música e playlists de YouTube, Spotify e SoundCloud em uma fila unificada.
 - Player interativo com pausa, avanço, retorno, loop e volume.
 - Soundboard organizado por categorias para efeitos, memes e trilhas locais.
-- Rolagem segura de dados por `/roll` ou por expressões como `1d20+7` no chat.
+- Rolagem segura de dados e cálculo automático de expressões solitárias no chat.
 - XP, níveis, Renome e moedas concedidos pelas ações realizadas no bot.
 - Perfis, inventários e economia independentes em cada servidor.
 - Mercador com estoque exclusivo por servidor e renovação diária.
@@ -44,8 +44,8 @@ Gideon é um bot multitarefa para Discord criado para acompanhar campanhas de RP
 
 | Comando | Função |
 | --- | --- |
-| `/roll` | Rola expressões de dados e exibe dados, modificadores e total. |
-| `1d20+7` no chat | Detecta e executa automaticamente uma expressão de dados. |
+| `/roll` | Rola dados ou calcula uma expressão matemática. |
+| Expressão no chat | Detecta mensagens como `1d20+7`, `10+10`, `85+50%` e `10x10+78`. |
 | `/perfil` | Exibe a ficha, nível, XP, moedas, Renome e resumo da coleção. |
 | `/customizar` | Personaliza cor, título, lema e brasão do perfil. |
 | `/daily` | Recebe a recompensa diária. |
