@@ -7,7 +7,7 @@ const fs = require('fs');
 const { safelyDestroyVoiceConnection } = require('../utils/voiceConnection');
 const { createVoiceSessionGuard } = require('../utils/voiceSessionGuard');
 const { buildAudioCatalog, parseAudioName } = require('../utils/audioCatalog');
-const { getAudioMetadata } = require('../utils/audioMetadata');
+const { loadAudioMetadata } = require('../utils/audioMetadata');
 
 class AudioPlayerManager {
     constructor(guild, voiceChannel, audioFolder, supportedExtensions, client, onDestroy) {
@@ -18,18 +18,7 @@ class AudioPlayerManager {
         this.client = client; // Discord client para ouvir voiceStateUpdate
         this.onDestroy = onDestroy;
         this.destroyed = false;
-
-        this.connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: guild.id,
-            adapterCreator: guild.voiceAdapterCreator,
-        });
-
-        this.player = createAudioPlayer({
-            behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
-        });
-
-        this.connection.subscribe(this.player);
+        this.controlQueue = Promise.resolve();
 
         this.currentResource = null;
         this.currentAudioName = null;
@@ -45,6 +34,22 @@ class AudioPlayerManager {
         // Lista de áudios
         this.reloadAudioList();
 
+        // Só cria a sessão de voz depois que o catálogo foi carregado com sucesso.
+        this.player = createAudioPlayer({
+            behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
+        });
+        try {
+            this.connection = joinVoiceChannel({
+                channelId: voiceChannel.id,
+                guildId: guild.id,
+                adapterCreator: guild.voiceAdapterCreator,
+            });
+            this.connection.subscribe(this.player);
+        } catch (error) {
+            safelyDestroyVoiceConnection(this.connection);
+            throw error;
+        }
+
         // Listener do player
         this.player.on(AudioPlayerStatus.Idle, () => {
             if (this.destroyed) return;
@@ -53,7 +58,7 @@ class AudioPlayerManager {
             } else {
                 this.currentResource = null;
                 this.currentAudioName = null;
-                if (this.updateMessage) this.updateMessage();
+                this.requestMessageUpdate();
                 this.startIdleTimeout();
             }
         });
@@ -62,7 +67,7 @@ class AudioPlayerManager {
             console.error('Erro no player:', error);
             this.currentResource = null;
             this.currentAudioName = null;
-            if (this.updateMessage) this.updateMessage();
+            this.requestMessageUpdate();
             this.startIdleTimeout();
         });
 
@@ -110,7 +115,7 @@ class AudioPlayerManager {
 
     getAudioMetadata(audioName = this.currentAudioName) {
         if (!audioName) return null;
-        return getAudioMetadata(this.audioFolder, audioName);
+        return this.audioMetadata[audioName] || null;
     }
 
     reloadAudioList() {
@@ -119,6 +124,7 @@ class AudioPlayerManager {
             .filter((file) => this.supportedExtensions.includes(path.extname(file).toLowerCase()));
         this.audioNames = [...new Set(files.map((f) => path.basename(f, path.extname(f))))];
         this.audioCatalog = buildAudioCatalog(this.audioNames);
+        this.audioMetadata = loadAudioMetadata(this.audioFolder);
         this.selectedCategory = this.audioCatalog.has(previousCategory)
             ? previousCategory
             : this.getCategories()[0];
@@ -128,6 +134,22 @@ class AudioPlayerManager {
 
     setUpdateMessageFunction(fn) {
         this.updateMessage = fn;
+    }
+
+    enqueueControl(callback) {
+        const operation = this.controlQueue.then(() => {
+            if (this.destroyed) return false;
+            return callback();
+        });
+        this.controlQueue = operation.catch(() => {});
+        return operation;
+    }
+
+    requestMessageUpdate() {
+        if (this.destroyed || typeof this.updateMessage !== 'function') return;
+        Promise.resolve(this.updateMessage()).catch((error) => {
+            if (error.code !== 10008) console.error('Erro ao atualizar painel do soundpad:', error);
+        });
     }
 
     setSentMessage(message) {
@@ -147,42 +169,49 @@ class AudioPlayerManager {
             .find((p) => fs.existsSync(p));
         if (!audioPath) return false;
 
-        this.playResource(audioPath);
-        this.currentAudioName = audioName;
+        this.playResource(audioPath, audioName);
         return true;
     }
 
-    playResource(audioPath) {
+    playResource(audioPath, audioName = this.currentAudioName) {
         if (this.destroyed) return;
         const resource = createAudioResource(audioPath, { metadata: { path: audioPath }, inlineVolume: true });
         resource.volume.setVolume(this.volume);
         this.currentResource = resource;
+        this.currentAudioName = audioName;
         this.player.play(resource);
     }
 
     pause() {
-        this.player.pause();
+        if (this.destroyed) return false;
+        return this.player.pause();
     }
 
     unpause() {
-        this.player.unpause();
+        if (this.destroyed) return false;
+        return this.player.unpause();
     }
 
     stop() {
+        if (this.destroyed) return false;
         this.currentResource = null;
         this.currentAudioName = null;
-        this.player.stop(true);
-        if (!this.destroyed) this.startIdleTimeout();
+        const stopped = this.player.stop(true);
+        this.startIdleTimeout();
+        return stopped;
     }
 
     setVolume(volume) {
+        if (this.destroyed) return this.volume;
         this.volume = Math.min(2, Math.max(0, volume));
-        if (this.currentResource) {
+        if (this.currentResource?.volume) {
             this.currentResource.volume.setVolume(this.volume);
         }
+        return this.volume;
     }
 
     toggleLoop() {
+        if (this.destroyed) return false;
         this.loopEnabled = !this.loopEnabled;
         return this.loopEnabled;
     }
@@ -190,14 +219,18 @@ class AudioPlayerManager {
     destroy({ deleteMessage = false } = {}) {
         if (this.destroyed) return;
         this.destroyed = true;
+        this.loopEnabled = false;
         this.voiceGuard?.dispose();
         this.player.stop(true);
         this.currentResource = null;
         this.currentAudioName = null;
         safelyDestroyVoiceConnection(this.connection);
         if (deleteMessage && this.sentMessage && !this.sentMessage.deleted) {
-            this.sentMessage.delete().catch(() => {});
+            this.sentMessage.delete().catch((error) => {
+                if (error.code !== 10008) console.error('Erro ao apagar painel do soundpad:', error);
+            });
         }
+        this.updateMessage = null;
         this.onDestroy?.();
         this.onDestroy = null;
     }

@@ -9,6 +9,7 @@ const { SlashCommandBuilder, PermissionsBitField } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
+const { promisify } = require('util');
 const {
     MAX_AUDIO_DURATION_SECONDS,
     MAX_DOWNLOADED_AUDIO_BYTES,
@@ -17,6 +18,9 @@ const {
     validateYouTubeUrl,
 } = require('../../utils/audioFiles');
 const { saveAudioMetadata } = require('../../utils/audioMetadata');
+
+const execFileAsync = promisify(execFile);
+const activeDownloads = new Set();
 
 function parseDownloadMetadata(output) {
     return String(output || '').split(/\r?\n/).reduce((metadata, line) => {
@@ -61,8 +65,10 @@ module.exports = {
         .setDMPermission(false),
 
     async execute(interaction) {
+        let downloadKey;
+        let downloadReserved = false;
         try {
-            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+            if (!interaction.inGuild() || !interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild)) {
                 return interaction.reply({ content: '❌ Você precisa da permissão Gerenciar Servidor.', flags: 64 });
             }
 
@@ -71,20 +77,24 @@ module.exports = {
             const url = validateYouTubeUrl(interaction.options.getString('url'));
             const fileName = `${tipo}-${nome}`;
 
-            await interaction.reply({ content: '🎶 Baixando e convertendo, aguarde...', flags: 64 });
+            await interaction.deferReply({ flags: 64 });
+            await interaction.editReply({ content: '🎶 Baixando e convertendo, aguarde...' });
 
             const audioFolderPath = path.join(__dirname, 'audios');
-            if (!fs.existsSync(audioFolderPath)) {
-                fs.mkdirSync(audioFolderPath, { recursive: true });
-            }
+            await fs.promises.mkdir(audioFolderPath, { recursive: true });
 
             const outputTemplate = resolveInside(audioFolderPath, `${fileName}.%(ext)s`);
             const finalPath = resolveInside(audioFolderPath, `${fileName}.mp3`);
-            if (fs.existsSync(finalPath)) {
-                return interaction.followUp({ content: '❌ Já existe um áudio com esse nome.', flags: 64 });
+            downloadKey = finalPath.toLowerCase();
+            if (fs.existsSync(finalPath) || activeDownloads.has(downloadKey)) {
+                return interaction.editReply({ content: '❌ Já existe um áudio com esse nome ou ele já está sendo baixado.' });
             }
+            activeDownloads.add(downloadKey);
+            downloadReserved = true;
+
             const ytDlpPath = path.join(__dirname, 'yt-dlp.exe');
             const cookiesPath = path.join(__dirname, 'cookies.txt');
+            if (!fs.existsSync(ytDlpPath)) throw new Error('O executável yt-dlp.exe não foi encontrado.');
             const args = [
                 '--extractor-args',
                 'youtube:player_client=android',
@@ -108,72 +118,61 @@ module.exports = {
 
             if (fs.existsSync(cookiesPath)) args.unshift('--cookies', cookiesPath);
 
-            execFile(ytDlpPath, args, { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 }, async (error, stdout, stderr) => {
-                try {
-                    if (error) {
-                        console.error('Erro no yt-dlp:', stderr || stdout || error);
-                        await interaction.followUp({
-                            content: '❌ Falha ao baixar o áudio. Confira a URL e os limites de 2 horas e 100 MB.',
-                            flags: 64,
-                        });
-                        return;
-                    }
-
-                    const downloadMetadata = parseDownloadMetadata(stdout);
-                    const downloadedPath = resolveDownloadedAudioPath(
-                        downloadMetadata,
-                        finalPath,
-                        audioFolderPath,
-                    );
-
-                    if (!fs.existsSync(downloadedPath)) {
-                        console.error('O yt-dlp terminou sem gerar o arquivo esperado.', {
-                            expectedPath: finalPath,
-                            reportedPath: downloadMetadata?.filepath,
-                            output: stdout,
-                            details: stderr,
-                            limits: 'Duração máxima de 2 horas e download máximo de 100 MB.',
-                        });
-                        await interaction.followUp({
-                            content: '❌ O vídeo não gerou um áudio. Confira os limites de **2 horas** e **100 MB**.',
-                            flags: 64,
-                        });
-                        return;
-                    }
-
-                    if (fs.statSync(downloadedPath).size > MAX_DOWNLOADED_AUDIO_BYTES) {
-                        fs.unlinkSync(downloadedPath);
-                        await interaction.followUp({ content: '❌ O áudio convertido ultrapassou 100 MB.', flags: 64 });
-                        return;
-                    }
-
-                    if (downloadedPath !== finalPath) fs.renameSync(downloadedPath, finalPath);
-                    const sourceChannel = downloadMetadata?.channel;
-                    saveAudioMetadata(audioFolderPath, fileName, {
-                        source: 'youtube',
-                        sourceChannel: sourceChannel && sourceChannel !== 'NA'
-                            ? sourceChannel
-                            : 'Canal não identificado',
-                    });
-
-                    await interaction.followUp({
-                        content: `✅ Áudio salvo como **${fileName}.mp3**`,
-                        flags: 64,
-                    });
-                } catch (callbackError) {
-                    console.error('Erro ao finalizar download:', callbackError);
-                    await interaction.followUp({
-                        content: '❌ O download terminou, mas não foi possível finalizar o arquivo.',
-                        flags: 64,
-                    }).catch(() => {});
-                }
+            const { stdout, stderr } = await execFileAsync(ytDlpPath, args, {
+                timeout: 10 * 60 * 1000,
+                maxBuffer: 1024 * 1024,
+                windowsHide: true,
             });
-            return undefined;
+            const downloadMetadata = parseDownloadMetadata(stdout);
+            const downloadedPath = resolveDownloadedAudioPath(
+                downloadMetadata,
+                finalPath,
+                audioFolderPath,
+            );
+
+            if (!fs.existsSync(downloadedPath)) {
+                console.error('O yt-dlp terminou sem gerar o arquivo esperado.', {
+                    expectedPath: finalPath,
+                    reportedPath: downloadMetadata?.filepath,
+                    output: stdout,
+                    details: stderr,
+                    limits: 'Duração máxima de 2 horas e download máximo de 100 MB.',
+                });
+                return interaction.editReply({
+                    content: '❌ O vídeo não gerou um áudio. Confira os limites de **2 horas** e **100 MB**.',
+                });
+            }
+
+            const downloadedStats = await fs.promises.stat(downloadedPath);
+            if (downloadedStats.size > MAX_DOWNLOADED_AUDIO_BYTES) {
+                await fs.promises.unlink(downloadedPath);
+                return interaction.editReply({ content: '❌ O áudio convertido ultrapassou 100 MB.' });
+            }
+
+            if (downloadedPath !== finalPath) await fs.promises.rename(downloadedPath, finalPath);
+            const sourceChannel = downloadMetadata?.channel;
+            saveAudioMetadata(audioFolderPath, fileName, {
+                source: 'youtube',
+                sourceChannel: sourceChannel && sourceChannel !== 'NA'
+                    ? sourceChannel
+                    : 'Canal não identificado',
+            });
+
+            return interaction.editReply({
+                content: `✅ Áudio salvo como **${fileName}.mp3**`,
+            });
         } catch (err) {
             console.error('Erro ao processar:', err);
-            const response = { content: `❌ ${err.message || 'Não foi possível processar o vídeo.'}` };
-            if (interaction.deferred || interaction.replied) return interaction.followUp({ ...response, flags: 64 });
+            const acknowledged = interaction.deferred || interaction.replied;
+            const response = {
+                content: acknowledged
+                    ? '❌ Falha ao baixar o áudio. Confira a URL e os limites de 2 horas e 100 MB.'
+                    : `❌ ${err.message || 'Não foi possível processar o vídeo.'}`,
+            };
+            if (acknowledged) return interaction.editReply(response).catch(() => {});
             return interaction.reply({ ...response, flags: 64 });
+        } finally {
+            if (downloadReserved) activeDownloads.delete(downloadKey);
         }
     },
     parseDownloadMetadata,

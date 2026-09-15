@@ -2,27 +2,25 @@ const { SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
-// Função para calcular tamanho da pasta
-function getFolderSize(folderPath) {
-    let totalSize = 0;
+// Calcula sem bloquear o event loop, mesmo quando há muitos arquivos.
+async function getFolderSize(folderPath) {
+    async function calculateSize(dir) {
+        const files = await fs.promises.readdir(dir, { withFileTypes: true });
+        const sizes = await Promise.all(files.map(async (file) => {
+            const filePath = path.join(dir, file.name);
 
-    function calculateSize(dir) {
-        const files = fs.readdirSync(dir);
-
-        for (const file of files) {
-            const filePath = path.join(dir, file);
-            const stats = fs.statSync(filePath);
-
-            if (stats.isDirectory()) {
-                calculateSize(filePath);
-            } else {
-                totalSize += stats.size;
+            if (file.isSymbolicLink()) return 0;
+            if (file.isDirectory()) return calculateSize(filePath);
+            if (file.isFile()) {
+                const stats = await fs.promises.stat(filePath);
+                return stats.size;
             }
-        }
+            return 0;
+        }));
+        return sizes.reduce((total, size) => total + size, 0);
     }
 
-    calculateSize(folderPath);
-    return totalSize;
+    return calculateSize(folderPath);
 }
 
 // Função para formatar automaticamente o tamanho
@@ -40,16 +38,26 @@ function formatSize(bytes) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('audiosize')
-        .setDescription('Mostra o tamanho total da pasta /audios'),
+        .setDescription('Mostra o tamanho total da pasta /audios')
+        .setDMPermission(false),
 
     async execute(interaction) {
-        const folderPath = path.join(__dirname, 'audios'); // ajuste se necessário
-        const sizeInBytes = getFolderSize(folderPath);
-        const formattedSize = formatSize(sizeInBytes);
+        await interaction.deferReply({ flags: 64 });
+        try {
+            const folderPath = path.join(__dirname, 'audios');
+            const sizeInBytes = await getFolderSize(folderPath);
+            const formattedSize = formatSize(sizeInBytes);
 
-        await interaction.reply({
-            content: `📂 A pasta **/audios** ocupa aproximadamente **${formattedSize}**`,
-            flags: 64,
-        });
+            await interaction.editReply({
+                content: `📂 A pasta **/audios** ocupa aproximadamente **${formattedSize}**`,
+            });
+        } catch (error) {
+            console.error('Erro ao calcular o tamanho da pasta de áudios:', error);
+            await interaction.editReply({
+                content: '❌ Não foi possível calcular o tamanho da pasta de áudios.',
+            });
+        }
     },
+    formatSize,
+    getFolderSize,
 };

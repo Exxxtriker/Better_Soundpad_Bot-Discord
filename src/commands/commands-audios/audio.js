@@ -22,6 +22,13 @@ module.exports = {
         .setDMPermission(false),
 
     async execute(interaction) {
+        if (!interaction.inGuild() || !interaction.guild || !interaction.channel) {
+            return interaction.reply({
+                content: '⚠️ O soundpad só pode ser usado dentro de um servidor.',
+                flags: 64,
+            });
+        }
+
         const guildId = interaction.guild.id;
 
         if (isMusicActive(guildId)) {
@@ -31,6 +38,8 @@ module.exports = {
             });
         }
 
+        const existingPlayer = activePlayers.get(guildId);
+        if (existingPlayer?.destroyed) activePlayers.delete(guildId);
         if (activePlayers.has(guildId)) {
             return interaction.reply({ content: '⚠️ Já existe um menu de áudio ativo neste servidor!', flags: 64 });
         }
@@ -48,18 +57,51 @@ module.exports = {
             });
         }
 
+        const textPermissions = interaction.channel.permissionsFor?.(interaction.guild.members.me);
+        if (!textPermissions?.has([
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.EmbedLinks,
+        ])) {
+            return interaction.reply({
+                content: '⚠️ Preciso das permissões Ver Canal, Enviar Mensagens e Inserir Links neste canal.',
+                flags: 64,
+            });
+        }
+
         const audioFolder = path.join(__dirname, 'audios');
         if (!fs.existsSync(audioFolder)) {
             return interaction.reply({ content: '⚠️ A pasta de áudios não foi encontrada!', flags: 64 });
         }
 
+        // Reserva o servidor antes do primeiro await e impede duas inicializações simultâneas.
+        const reservation = { initializing: true, destroyed: false };
+        activePlayers.set(guildId, reservation);
+        try {
+            await interaction.deferReply({ flags: 64 });
+        } catch (error) {
+            if (activePlayers.get(guildId) === reservation) activePlayers.delete(guildId);
+            if ([10062, 40060].includes(Number(error.code))) return undefined;
+            throw error;
+        }
+
         const supportedExtensions = ['.mp3', '.ogg', '.wav'];
-        const audioFiles = fs.readdirSync(audioFolder)
-            .filter((file) => supportedExtensions.includes(path.extname(file).toLowerCase()));
+        let audioFiles;
+        try {
+            audioFiles = fs.readdirSync(audioFolder)
+                .filter((file) => supportedExtensions.includes(path.extname(file).toLowerCase()));
+        } catch (error) {
+            if (activePlayers.get(guildId) === reservation) activePlayers.delete(guildId);
+            console.error('Erro ao ler a pasta do soundpad:', error);
+            return interaction.editReply({
+                content: '❌ Não foi possível ler a pasta de áudios.',
+            });
+        }
         const audioNames = [...new Set(audioFiles.map((file) => path.basename(file, path.extname(file))))];
 
         if (audioNames.length === 0) {
-            return interaction.reply({ content: '⚠️ Nenhum áudio encontrado na pasta!', flags: 64 });
+            if (activePlayers.get(guildId) === reservation) activePlayers.delete(guildId);
+            return interaction.editReply({ content: '⚠️ Nenhum áudio encontrado na pasta!' });
         }
 
         let deleteListener;
@@ -69,14 +111,20 @@ module.exports = {
             if (deleteListener) interaction.client.removeListener('messageDelete', deleteListener);
         };
 
-        playerManager = new AudioPlayerManager(
-            interaction.guild,
-            voiceChannel,
-            audioFolder,
-            supportedExtensions,
-            interaction.client,
-            cleanup,
-        );
+        try {
+            playerManager = new AudioPlayerManager(
+                interaction.guild,
+                voiceChannel,
+                audioFolder,
+                supportedExtensions,
+                interaction.client,
+                cleanup,
+            );
+        } catch (error) {
+            if (activePlayers.get(guildId) === reservation) activePlayers.delete(guildId);
+            console.error('Erro ao preparar player de áudio:', error);
+            return interaction.editReply('❌ Não foi possível preparar o soundpad neste servidor.');
+        }
         activePlayers.set(guildId, playerManager);
 
         // Função para criar embed atualizado
@@ -123,7 +171,7 @@ module.exports = {
 
             if (categories.length > 0) {
                 const categoryMenu = new StringSelectMenuBuilder()
-                    .setCustomId('audio_category')
+                    .setCustomId('soundpad_category')
                     .setPlaceholder('Escolha uma categoria')
                     .addOptions(categories.map((category) => ({
                         label: category,
@@ -137,13 +185,13 @@ module.exports = {
 
             if (slice.length > 0) {
                 const selectMenu = new StringSelectMenuBuilder()
-                    .setCustomId('audio_select')
+                    .setCustomId('soundpad_select')
                     .setPlaceholder(`Escolha um áudio • página ${playerManager.currentPage}/${totalPages}`)
-                    .addOptions(slice.map((entry) => ({
+                    .addOptions(slice.map((entry, index) => ({
                         label: entry.displayName.length > 100
                             ? `${entry.displayName.slice(0, 97)}...`
                             : entry.displayName,
-                        value: entry.audioName,
+                        value: String(index),
                         emoji: '🎻',
                     })));
                 rows.push(new ActionRowBuilder().addComponents(selectMenu));
@@ -152,40 +200,38 @@ module.exports = {
             rows.push(
                 new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId('prev_page').setLabel('Página anterior').setStyle(ButtonStyle.Secondary)
+                        .setCustomId('soundpad_previous').setLabel('Página anterior').setStyle(ButtonStyle.Secondary)
                         .setEmoji('◀️')
                         .setDisabled(playerManager.currentPage <= 1),
                     new ButtonBuilder()
-                        .setCustomId('next_page').setLabel('Próxima página').setStyle(ButtonStyle.Secondary)
+                        .setCustomId('soundpad_next').setLabel('Próxima página').setStyle(ButtonStyle.Secondary)
                         .setEmoji('▶️')
                         .setDisabled(playerManager.currentPage >= totalPages),
                 ),
                 new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('resume_audio').setLabel('Play').setStyle(ButtonStyle.Success)
+                    new ButtonBuilder().setCustomId('soundpad_resume').setLabel('Play').setStyle(ButtonStyle.Success)
                         .setEmoji('▶️'),
-                    new ButtonBuilder().setCustomId('pause_audio').setLabel('Pause').setStyle(ButtonStyle.Danger)
+                    new ButtonBuilder().setCustomId('soundpad_pause').setLabel('Pause').setStyle(ButtonStyle.Danger)
                         .setEmoji('⏸️'),
-                    new ButtonBuilder().setCustomId('loop_toggle').setLabel(`Loop: ${playerManager.loopEnabled ? 'Ativado' : 'Desativado'}`).setStyle(playerManager.loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
+                    new ButtonBuilder().setCustomId('soundpad_loop').setLabel(`Loop: ${playerManager.loopEnabled ? 'Ativado' : 'Desativado'}`).setStyle(playerManager.loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
                         .setEmoji('🔄'),
                 ),
                 new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('reload').setLabel('Recarregar').setStyle(ButtonStyle.Success)
+                    new ButtonBuilder().setCustomId('soundpad_reload').setLabel('Recarregar').setStyle(ButtonStyle.Success)
                         .setEmoji('⏳'),
-                    new ButtonBuilder().setCustomId('stop_audio').setLabel('Parar').setStyle(ButtonStyle.Danger)
+                    new ButtonBuilder().setCustomId('soundpad_stop').setLabel('Parar').setStyle(ButtonStyle.Danger)
                         .setEmoji('⏹️'),
-                    new ButtonBuilder().setCustomId('volume_up').setLabel('+').setStyle(ButtonStyle.Secondary)
+                    new ButtonBuilder().setCustomId('soundpad_volume_up').setLabel('+').setStyle(ButtonStyle.Secondary)
                         .setEmoji('🔊'),
-                    new ButtonBuilder().setCustomId('volume_down').setLabel('-').setStyle(ButtonStyle.Secondary)
+                    new ButtonBuilder().setCustomId('soundpad_volume_down').setLabel('-').setStyle(ButtonStyle.Secondary)
                         .setEmoji('🔉'),
-                    new ButtonBuilder().setCustomId('close_audio').setLabel('Encerrar').setStyle(ButtonStyle.Danger)
+                    new ButtonBuilder().setCustomId('soundpad_close').setLabel('Encerrar').setStyle(ButtonStyle.Danger)
                         .setEmoji('🛑'),
                 ),
             );
 
             return rows;
         };
-
-        await interaction.deferReply({ flags: 64 });
 
         let sentMessage;
         try {
@@ -201,11 +247,15 @@ module.exports = {
 
         playerManager.setSentMessage(sentMessage);
         playerManager.setUpdateMessageFunction(async () => {
-            try {
-                await sentMessage.edit({ embeds: [createEmbed()], components: createRows() });
-            } catch (error) {
-                console.error('Erro ao atualizar mensagem:', error);
-            }
+            if (playerManager.destroyed) return;
+            await sentMessage.edit({ embeds: [createEmbed()], components: createRows() })
+                .catch((error) => {
+                    if (error.code === 10008) {
+                        playerManager.destroy();
+                        return;
+                    }
+                    throw error;
+                });
         });
 
         // Listener para deletar o menu manualmente
@@ -219,7 +269,9 @@ module.exports = {
         // Inicia idleTimeout automaticamente
         playerManager.startIdleTimeout();
         await interaction.deleteReply().catch((error) => {
-            console.error('Não foi possível remover a confirmação do painel:', error);
+            if (![10008, 10062].includes(Number(error.code))) {
+                console.error('Não foi possível remover a confirmação do painel:', error);
+            }
         });
         return undefined;
     },

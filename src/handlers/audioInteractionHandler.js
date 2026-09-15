@@ -1,86 +1,97 @@
 const activePlayers = require('./activePlayers');
 
+const AUDIO_MENU_IDS = new Set(['soundpad_category', 'soundpad_select']);
 const AUDIO_BUTTONS = new Set([
-    'resume_audio',
-    'pause_audio',
-    'stop_audio',
-    'close_audio',
-    'loop_toggle',
-    'volume_up',
-    'volume_down',
-    'next_page',
-    'prev_page',
-    'reload',
+    'soundpad_resume',
+    'soundpad_pause',
+    'soundpad_stop',
+    'soundpad_close',
+    'soundpad_loop',
+    'soundpad_volume_up',
+    'soundpad_volume_down',
+    'soundpad_next',
+    'soundpad_previous',
+    'soundpad_reload',
 ]);
+const EXPECTED_DISCORD_ERRORS = new Set([10008, 10062, 40060]);
 
-module.exports = async (interaction) => {
-    const isAudioMenu = interaction.isStringSelectMenu()
-        && ['audio_category', 'audio_select'].includes(interaction.customId);
-    const isAudioButton = interaction.isButton() && AUDIO_BUTTONS.has(interaction.customId);
-    if (!isAudioMenu && !isAudioButton) return;
-    if (!interaction.inGuild()) return;
+function isExpectedInteractionError(error) {
+    return EXPECTED_DISCORD_ERRORS.has(Number(error?.code));
+}
 
-    const playerManager = activePlayers.get(interaction.guildId);
-    if (!playerManager || playerManager.destroyed) {
-        await interaction.reply({ content: '⚠️ Este player não está mais ativo.', flags: 64 });
-        return;
+async function safelyReply(interaction, payload) {
+    try {
+        if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
+        else await interaction.reply(payload);
+        return true;
+    } catch (error) {
+        if (isExpectedInteractionError(error)) return false;
+        throw error;
     }
+}
 
-    if (interaction.member.voice.channelId !== playerManager.voiceChannel.id) {
-        await interaction.reply({
-            content: '⚠️ Entre no mesmo canal de voz do bot para usar estes controles.',
-            flags: 64,
-        });
-        return;
+async function safelyDeferUpdate(interaction) {
+    try {
+        await interaction.deferUpdate();
+        return true;
+    } catch (error) {
+        if (isExpectedInteractionError(error)) return false;
+        throw error;
     }
+}
 
-    await interaction.deferUpdate();
-
+async function updateSoundpad(interaction, playerManager, isAudioMenu) {
     if (isAudioMenu) {
-        if (interaction.customId === 'audio_category') {
-            playerManager.selectCategory(interaction.values[0]);
+        if (interaction.customId === 'soundpad_category') {
+            if (!playerManager.selectCategory(interaction.values[0])) {
+                throw new Error('Essa categoria não está mais disponível. Recarregue o soundpad.');
+            }
         } else {
-            playerManager.playAudio(interaction.values[0]);
+            const selectedIndex = Number.parseInt(interaction.values[0], 10);
+            const selectedAudio = playerManager.getAudioPage()[selectedIndex];
+            if (!selectedAudio || !playerManager.playAudio(selectedAudio.audioName)) {
+                throw new Error('Esse áudio não está mais disponível. Recarregue o soundpad.');
+            }
         }
         await playerManager.updateMessage?.();
         return;
     }
 
     switch (interaction.customId) {
-    case 'resume_audio':
+    case 'soundpad_resume':
         playerManager.unpause();
         break;
-    case 'pause_audio':
+    case 'soundpad_pause':
         playerManager.pause();
         break;
-    case 'stop_audio':
+    case 'soundpad_stop':
         playerManager.stop();
         break;
-    case 'close_audio':
+    case 'soundpad_close':
         playerManager.destroy();
         await interaction.message.delete().catch((error) => {
-            if (error.code !== 10008) console.error('Erro ao apagar o menu do soundpad:', error);
+            if (!isExpectedInteractionError(error)) throw error;
         });
         return;
-    case 'loop_toggle':
+    case 'soundpad_loop':
         playerManager.toggleLoop();
         break;
-    case 'volume_up':
+    case 'soundpad_volume_up':
         playerManager.setVolume(playerManager.volume + 0.1);
         break;
-    case 'volume_down':
+    case 'soundpad_volume_down':
         playerManager.setVolume(playerManager.volume - 0.1);
         break;
-    case 'next_page':
+    case 'soundpad_next':
         playerManager.currentPage = Math.min(
             playerManager.currentPage + 1,
             playerManager.getTotalPages(),
         );
         break;
-    case 'prev_page':
+    case 'soundpad_previous':
         playerManager.currentPage = Math.max(playerManager.currentPage - 1, 1);
         break;
-    case 'reload':
+    case 'soundpad_reload':
         playerManager.reloadAudioList();
         break;
     default:
@@ -88,4 +99,53 @@ module.exports = async (interaction) => {
     }
 
     await playerManager.updateMessage?.();
-};
+}
+
+async function audioInteractionHandler(interaction) {
+    const isAudioMenu = interaction.isStringSelectMenu()
+        && AUDIO_MENU_IDS.has(interaction.customId);
+    const isAudioButton = interaction.isButton() && AUDIO_BUTTONS.has(interaction.customId);
+    if (!isAudioMenu && !isAudioButton) return;
+    if (!interaction.inGuild()) return;
+
+    const playerManager = activePlayers.get(interaction.guildId);
+    const isCurrentPanel = playerManager?.sentMessage?.id === interaction.message?.id;
+    if (!playerManager || playerManager.destroyed || !isCurrentPanel) {
+        await safelyReply(interaction, {
+            content: '⚠️ Este painel do soundpad não está mais ativo.',
+            flags: 64,
+        });
+        return;
+    }
+
+    if (interaction.member?.voice?.channelId !== playerManager.voiceChannel.id) {
+        await safelyReply(interaction, {
+            content: '⚠️ Entre no mesmo canal de voz do bot para usar estes controles.',
+            flags: 64,
+        });
+        return;
+    }
+
+    if (!await safelyDeferUpdate(interaction)) return;
+
+    try {
+        await playerManager.enqueueControl(() => updateSoundpad(
+            interaction,
+            playerManager,
+            isAudioMenu,
+        ));
+    } catch (error) {
+        if (isExpectedInteractionError(error)) return;
+        console.error('Erro ao controlar o soundpad:', error);
+        await safelyReply(interaction, {
+            content: `❌ ${error.message || 'Não foi possível executar este controle.'}`,
+            flags: 64,
+        });
+    }
+}
+
+module.exports = audioInteractionHandler;
+module.exports.AUDIO_BUTTONS = AUDIO_BUTTONS;
+module.exports.AUDIO_MENU_IDS = AUDIO_MENU_IDS;
+module.exports.isExpectedInteractionError = isExpectedInteractionError;
+module.exports.safelyDeferUpdate = safelyDeferUpdate;

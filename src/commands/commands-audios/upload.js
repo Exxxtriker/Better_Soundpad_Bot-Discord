@@ -22,7 +22,7 @@ module.exports = {
 
     async execute(interaction) {
         try {
-            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+            if (!interaction.inGuild() || !interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild)) {
                 return interaction.reply({ content: '❌ Você precisa da permissão Gerenciar Servidor.', flags: 64 });
             }
 
@@ -43,24 +43,25 @@ module.exports = {
             await interaction.deferReply({ flags: 64 });
 
             const audioFolderPath = path.join(__dirname, 'audios');
-            if (!fs.existsSync(audioFolderPath)) {
-                fs.mkdirSync(audioFolderPath, { recursive: true });
-            }
+            await fs.promises.mkdir(audioFolderPath, { recursive: true });
 
             const displayName = sanitizeBaseName(path.basename(attachment.name, ext));
             const safeName = `Outros-${displayName}${ext}`;
             const filePath = resolveInside(audioFolderPath, safeName);
-            if (fs.existsSync(filePath)) {
-                return interaction.editReply('❌ Já existe um áudio com esse nome.');
-            }
-
             const response = await axios.get(attachment.url, {
                 responseType: 'arraybuffer',
                 timeout: 30_000,
                 maxContentLength: MAX_AUDIO_BYTES,
                 maxBodyLength: MAX_AUDIO_BYTES,
             });
-            fs.writeFileSync(filePath, response.data);
+            try {
+                await fs.promises.writeFile(filePath, response.data, { flag: 'wx' });
+            } catch (writeError) {
+                if (writeError.code === 'EEXIST') {
+                    return interaction.editReply('❌ Já existe um áudio com esse nome.');
+                }
+                throw writeError;
+            }
             try {
                 saveAudioMetadata(audioFolderPath, `Outros-${displayName}`, {
                     source: 'discord',
@@ -69,7 +70,7 @@ module.exports = {
                         : 'Canal do Discord',
                 });
             } catch (metadataError) {
-                fs.unlinkSync(filePath);
+                await fs.promises.unlink(filePath).catch(() => {});
                 throw metadataError;
             }
 
