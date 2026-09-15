@@ -68,6 +68,22 @@ function isMissingShardError(error) {
     return error instanceof RangeError && /^Shard \d+ not found$/.test(error.message);
 }
 
+function getBotReach(bot) {
+    const guilds = [...(bot.guilds?.cache?.values?.() ?? [])];
+    const memberCount = guilds.reduce((total, guild) => {
+        const guildMembers = Number(guild.memberCount);
+        return total + (Number.isFinite(guildMembers) && guildMembers > 0 ? guildMembers : 0);
+    }, 0);
+    return { memberCount: Math.floor(memberCount), serverCount: guilds.length };
+}
+
+function createReachStatus(bot) {
+    const { memberCount, serverCount } = getBotReach(bot);
+    const peopleLabel = memberCount === 1 ? 'pessoa' : 'pessoas';
+    const serversLabel = serverCount === 1 ? 'servidor' : 'servidores';
+    return `👥 ${memberCount.toLocaleString('pt-BR')} ${peopleLabel} • 🏰 ${serverCount.toLocaleString('pt-BR')} ${serversLabel}`;
+}
+
 function stopActivityRotation(bot) {
     const interval = activityIntervals.get(bot);
     if (!interval) return false;
@@ -111,6 +127,10 @@ module.exports = {
                 state: '⚔️ Use /help',
                 type: ActivityType.Custom,
             },
+            {
+                state: () => createReachStatus(bot),
+                type: ActivityType.Custom,
+            },
         ];
 
         let currentIndex = 0; // Inicia o índice da rotação de atividades
@@ -119,13 +139,16 @@ module.exports = {
         function updateActivity() {
             if (!canUpdatePresence(bot)) return;
             const activity = activities[currentIndex];
+            const activityState = typeof activity.state === 'function'
+                ? activity.state()
+                : activity.state;
 
             try {
                 bot.user.setPresence({
                     status: 'online',
                     activities: [{
                         name: 'Custom Status',
-                        state: activity.state,
+                        state: activityState,
                         type: activity.type,
                     }],
                 });
@@ -153,7 +176,9 @@ module.exports = {
         await syncApplicationCommands(bot);
     },
     canUpdatePresence,
+    createReachStatus,
     createStartupBanner,
+    getBotReach,
     isMissingShardError,
     stopActivityRotation,
 };
