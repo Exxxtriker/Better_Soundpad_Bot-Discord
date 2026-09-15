@@ -31,6 +31,7 @@ const HELP_PAGES = [
             '`/pagar` — Transfere moedas para outro jogador.',
             '`/mercador` — Compra melhorias, consumíveis e pacotes.',
             '',
+            'Cada oferta recebe **1 a 6 unidades por servidor**.',
             'O mercador renova o estoque à **00:00**, no horário de Brasília.',
         ].join('\n'),
     },
@@ -68,7 +69,7 @@ const HELP_PAGES = [
         title: '🎶 Música e áudios',
         description: [
             '`/play` — Toca músicas e playlists de YouTube, Spotify e SoundCloud.',
-            '`/audio` — Abre o repertório de efeitos, memes e trilhas locais.',
+            '`/audio` — Abre o repertório de SoundEffects, músicas e trilhas locais.',
             '',
             'Os players possuem fila, pausa, pular, voltar e loop.',
             'Também controlam volume e encerramento automático.',

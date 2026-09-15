@@ -4,6 +4,7 @@ const AUDIO_BUTTONS = new Set([
     'resume_audio',
     'pause_audio',
     'stop_audio',
+    'close_audio',
     'loop_toggle',
     'volume_up',
     'volume_down',
@@ -55,6 +56,12 @@ module.exports = async (interaction) => {
     case 'stop_audio':
         playerManager.stop();
         break;
+    case 'close_audio':
+        playerManager.destroy();
+        await interaction.message.delete().catch((error) => {
+            if (error.code !== 10008) console.error('Erro ao apagar o menu do soundpad:', error);
+        });
+        return;
     case 'loop_toggle':
         playerManager.toggleLoop();
         break;

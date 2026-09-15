@@ -8,6 +8,7 @@ const {
     resolveInside,
     sanitizeBaseName,
 } = require('../../utils/audioFiles');
+const { saveAudioMetadata } = require('../../utils/audioMetadata');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -46,7 +47,8 @@ module.exports = {
                 fs.mkdirSync(audioFolderPath, { recursive: true });
             }
 
-            const safeName = `${sanitizeBaseName(path.basename(attachment.name, ext))}${ext}`;
+            const displayName = sanitizeBaseName(path.basename(attachment.name, ext));
+            const safeName = `Outros-${displayName}${ext}`;
             const filePath = resolveInside(audioFolderPath, safeName);
             if (fs.existsSync(filePath)) {
                 return interaction.editReply('❌ Já existe um áudio com esse nome.');
@@ -59,8 +61,21 @@ module.exports = {
                 maxBodyLength: MAX_AUDIO_BYTES,
             });
             fs.writeFileSync(filePath, response.data);
+            try {
+                saveAudioMetadata(audioFolderPath, `Outros-${displayName}`, {
+                    source: 'discord',
+                    sourceChannel: interaction.channel?.name
+                        ? `#${interaction.channel.name}`
+                        : 'Canal do Discord',
+                });
+            } catch (metadataError) {
+                fs.unlinkSync(filePath);
+                throw metadataError;
+            }
 
-            return interaction.editReply({ content: `✅ O áudio **${safeName}** foi salvo com sucesso!` });
+            return interaction.editReply({
+                content: `✅ O áudio **${displayName}${ext}** foi salvo na categoria **Outros**!`,
+            });
         } catch (error) {
             console.error('Erro ao salvar o áudio:', error);
             const response = { content: `❌ ${error.message || 'Não foi possível salvar o áudio.'}` };

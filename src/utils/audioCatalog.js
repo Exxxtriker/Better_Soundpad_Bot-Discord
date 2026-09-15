@@ -5,9 +5,12 @@ const CATEGORY_ALIASES = new Map([
     ['soundtrack', 'Trilhas Sonoras'],
     ['trilha', 'Trilhas Sonoras'],
     ['trilhas', 'Trilhas Sonoras'],
-    ['sfx', 'Efeitos Sonoros'],
-    ['efeito', 'Efeitos Sonoros'],
-    ['efeitos', 'Efeitos Sonoros'],
+    ['sfx', 'SoundEffects'],
+    ['soundeffect', 'SoundEffects'],
+    ['soundeffects', 'SoundEffects'],
+    ['efeito', 'SoundEffects'],
+    ['efeitos', 'SoundEffects'],
+    ['meme', 'SoundEffects'],
     ['ambient', 'Ambientes'],
     ['ambience', 'Ambientes'],
     ['ambiente', 'Ambientes'],
@@ -19,7 +22,7 @@ const CATEGORY_ALIASES = new Map([
 const CATEGORY_PRIORITY = [
     'Trilhas Sonoras',
     'Ambientes',
-    'Efeitos Sonoros',
+    'SoundEffects',
     'Músicas',
     'Vozes',
     'Outros',
@@ -94,7 +97,7 @@ function getCategoryEmoji(category) {
     const key = normalizeCategoryKey(category);
     if (key.includes('trilha')) return '🎼';
     if (key.includes('ambiente')) return '🌲';
-    if (key.includes('efeito')) return '💥';
+    if (key.includes('efeito') || key.includes('soundeffect')) return '💥';
     if (key.includes('musica')) return '🎵';
     if (key.includes('voz')) return '🗣️';
     if (key === 'outros') return '📦';

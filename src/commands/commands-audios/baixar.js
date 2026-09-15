@@ -10,12 +10,34 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const {
-    MAX_AUDIO_BYTES,
     MAX_AUDIO_DURATION_SECONDS,
+    MAX_DOWNLOADED_AUDIO_BYTES,
     resolveInside,
     sanitizeBaseName,
     validateYouTubeUrl,
 } = require('../../utils/audioFiles');
+const { saveAudioMetadata } = require('../../utils/audioMetadata');
+
+function parseDownloadMetadata(output) {
+    return String(output || '').split(/\r?\n/).reduce((metadata, line) => {
+        if (metadata || !line.trim().startsWith('{')) return metadata;
+        try {
+            const parsed = JSON.parse(line);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+            return null;
+        }
+    }, null);
+}
+
+function resolveDownloadedAudioPath(metadata, expectedPath, audioFolderPath) {
+    if (!metadata?.filepath) return expectedPath;
+    const candidate = path.resolve(metadata.filepath);
+    const expectedFolder = path.resolve(audioFolderPath);
+    const isSafeAudioPath = path.dirname(candidate) === expectedFolder
+        && path.extname(candidate).toLowerCase() === '.mp3';
+    return isSafeAudioPath ? candidate : expectedPath;
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -28,7 +50,7 @@ module.exports = {
             .setDescription('Tipo de áudio')
             .setRequired(true)
             .addChoices(
-                { name: 'Meme', value: 'Meme' },
+                { name: 'SoundEffects', value: 'SoundEffects' },
                 { name: 'SoundTrack', value: 'SoundTrack' },
                 { name: 'Music', value: 'Music' },
             ))
@@ -69,13 +91,16 @@ module.exports = {
                 '--user-agent',
                 'Mozilla/5.0',
                 '-x',
+                '-f', 'bestaudio/best',
                 '--audio-format', 'mp3',
                 '--no-playlist',
                 '--no-overwrites',
-                '--max-filesize', '25M',
+                '--max-filesize', '100M',
                 '--match-filter', `duration <= ${MAX_AUDIO_DURATION_SECONDS}`,
                 '--quiet',
                 '--no-warnings',
+                '--no-simulate',
+                '--print', 'after_move:{"channel":%(channel)j,"filepath":%(filepath)j}',
                 '-o',
                 outputTemplate,
                 url,
@@ -88,25 +113,48 @@ module.exports = {
                     if (error) {
                         console.error('Erro no yt-dlp:', stderr || stdout || error);
                         await interaction.followUp({
-                            content: '❌ Falha ao baixar o áudio. Confira a URL, a duração e o limite de 25 MB.',
+                            content: '❌ Falha ao baixar o áudio. Confira a URL e os limites de 2 horas e 100 MB.',
                             flags: 64,
                         });
                         return;
                     }
 
-                    if (!fs.existsSync(finalPath)) {
+                    const downloadMetadata = parseDownloadMetadata(stdout);
+                    const downloadedPath = resolveDownloadedAudioPath(
+                        downloadMetadata,
+                        finalPath,
+                        audioFolderPath,
+                    );
+
+                    if (!fs.existsSync(downloadedPath)) {
+                        console.error('O yt-dlp terminou sem gerar o arquivo esperado.', {
+                            expectedPath: finalPath,
+                            reportedPath: downloadMetadata?.filepath,
+                            output: stdout,
+                            details: stderr,
+                            limits: 'Duração máxima de 2 horas e download máximo de 100 MB.',
+                        });
                         await interaction.followUp({
-                            content: '❌ O download terminou sem gerar o arquivo esperado.',
+                            content: '❌ O vídeo não gerou um áudio. Confira os limites de **2 horas** e **100 MB**.',
                             flags: 64,
                         });
                         return;
                     }
 
-                    if (fs.statSync(finalPath).size > MAX_AUDIO_BYTES) {
-                        fs.unlinkSync(finalPath);
-                        await interaction.followUp({ content: '❌ O áudio convertido ultrapassou 25 MB.', flags: 64 });
+                    if (fs.statSync(downloadedPath).size > MAX_DOWNLOADED_AUDIO_BYTES) {
+                        fs.unlinkSync(downloadedPath);
+                        await interaction.followUp({ content: '❌ O áudio convertido ultrapassou 100 MB.', flags: 64 });
                         return;
                     }
+
+                    if (downloadedPath !== finalPath) fs.renameSync(downloadedPath, finalPath);
+                    const sourceChannel = downloadMetadata?.channel;
+                    saveAudioMetadata(audioFolderPath, fileName, {
+                        source: 'youtube',
+                        sourceChannel: sourceChannel && sourceChannel !== 'NA'
+                            ? sourceChannel
+                            : 'Canal não identificado',
+                    });
 
                     await interaction.followUp({
                         content: `✅ Áudio salvo como **${fileName}.mp3**`,
@@ -128,4 +176,6 @@ module.exports = {
             return interaction.reply({ ...response, flags: 64 });
         }
     },
+    parseDownloadMetadata,
+    resolveDownloadedAudioPath,
 };

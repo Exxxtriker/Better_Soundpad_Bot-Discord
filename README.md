@@ -14,11 +14,13 @@ Gideon é um bot multitarefa para Discord criado para acompanhar campanhas de RP
 
 - Música e playlists de YouTube, Spotify e SoundCloud em uma fila unificada.
 - Player interativo com pausa, avanço, retorno, loop e volume.
-- Soundboard organizado por categorias para efeitos, memes e trilhas locais.
+- Encerramento manual do soundpad com desconexão e remoção automática do painel.
+- Soundboard organizado por categorias para SoundEffects, músicas e trilhas locais.
+- Origem do áudio exibida no soundpad; uploads são agrupados em **Outros**.
 - Rolagem segura de dados e cálculo automático de expressões solitárias no chat.
 - XP, níveis, Renome e moedas concedidos pelas ações realizadas no bot.
 - Perfis, inventários e economia independentes em cada servidor.
-- Mercador com estoque exclusivo por servidor e renovação diária.
+- Mercador com estoque diário aleatório de 1 a 6 unidades por oferta e servidor.
 - Cartas de classes, raças, terrenos, personagens, divindades e magias.
 - Exemplares únicos identificados por número de série, raridade e **Float**.
 - Álbuns, pacotes, combinações, trocas, vendas, descrições e casamento de cartas.
@@ -35,7 +37,7 @@ Gideon é um bot multitarefa para Discord criado para acompanhar campanhas de RP
 | `/play` | Reproduz uma música, busca ou playlist de YouTube, Spotify ou SoundCloud. |
 | `/audio` | Abre o catálogo de áudios locais separado por categorias. |
 | `/uploadaudio` | Adiciona um arquivo ao soundboard. Requer **Gerenciar Servidor**. |
-| `/ytmp3` | Baixa um áudio do YouTube para o catálogo. Requer **Gerenciar Servidor**. |
+| `/ytmp3` | Baixa áudios de até 2 horas e 100 MB do YouTube. Requer **Gerenciar Servidor**. |
 | `/audiosize` | Mostra o espaço utilizado pelo catálogo local. |
 
 `/play` e `/audio` são mutuamente exclusivos em cada servidor: enquanto um player estiver ativo, o outro ficará bloqueado. O bot encerra a sessão e o menu quando a fila fica inativa ou não existem mais usuários no canal de voz.
@@ -52,7 +54,7 @@ Gideon é um bot multitarefa para Discord criado para acompanhar campanhas de RP
 | `/pagar` | Transfere moedas para outro jogador do servidor. |
 | `/mercador` | Abre as alas de itens de perfil e de cartas. |
 
-O mercador renova seu estoque à **00:00 no horário de Brasília**. Itens limitados ficam indisponíveis naquele servidor depois da compra até a próxima renovação.
+O mercador renova seu estoque à **00:00 no horário de Brasília**. Cada oferta recebe de **1 a 6 unidades** naquele servidor e fica indisponível quando todas forem compradas.
 
 ### Coleção de cartas
 
@@ -178,6 +180,7 @@ npm run lint
 - Erros de execução são gravados em `logs/log.txt`.
 - Segredos conhecidos são substituídos por `[SEGREDO_REMOVIDO]` antes da gravação.
 - Se o MongoDB retornar `querySrv ECONNREFUSED`, o bot tenta novamente com DNS público, exceto quando `CUSTOM_DNS=false`.
+- Falhas HTTP 5xx, de rede ou do Gateway durante o login no Discord são repetidas automaticamente.
 - Falhas temporárias de transmissão podem ser recuperadas pelo motor de música; somente erros relevantes devem chegar ao log.
 
 ## Estrutura resumida

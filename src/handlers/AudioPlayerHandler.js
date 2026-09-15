@@ -7,6 +7,7 @@ const fs = require('fs');
 const { safelyDestroyVoiceConnection } = require('../utils/voiceConnection');
 const { createVoiceSessionGuard } = require('../utils/voiceSessionGuard');
 const { buildAudioCatalog, parseAudioName } = require('../utils/audioCatalog');
+const { getAudioMetadata } = require('../utils/audioMetadata');
 
 class AudioPlayerManager {
     constructor(guild, voiceChannel, audioFolder, supportedExtensions, client, onDestroy) {
@@ -105,6 +106,11 @@ class AudioPlayerManager {
             .flat()
             .find((audio) => audio.audioName === audioName);
         return entry?.displayName || parseAudioName(audioName).displayName;
+    }
+
+    getAudioMetadata(audioName = this.currentAudioName) {
+        if (!audioName) return null;
+        return getAudioMetadata(this.audioFolder, audioName);
     }
 
     reloadAudioList() {

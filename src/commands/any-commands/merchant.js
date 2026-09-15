@@ -297,6 +297,7 @@ const RARITY_COLORS = {
     Épico: 0x6A3D7C,
     Lendário: 0xC9A227,
 };
+const MAX_DAILY_STOCK = 6;
 const moneyFormatter = new Intl.NumberFormat('pt-BR');
 
 function getSaoPauloDayNumber(date = new Date()) {
@@ -318,14 +319,46 @@ function getStockId(guildId, dayKey, itemId) {
     return `${guildId}:${dayKey}:${itemId}`;
 }
 
-async function getSoldItemIds(guildId, dayKey, offers, StockModel = MerchantStock) {
+function getDailyStockLimit(guildId, dayKey, itemId, maximum = MAX_DAILY_STOCK) {
+    const seed = `${guildId}:${dayKey}:${itemId}`;
+    let hash = 0;
+    for (let index = 0; index < seed.length; index += 1) {
+        hash = (hash * 31 + seed.charCodeAt(index)) % 2_147_483_647;
+    }
+    return (hash % maximum) + 1;
+}
+
+async function getStockStates(guildId, dayKey, offers, StockModel = MerchantStock) {
     const stocks = await StockModel.find({
         guildId,
         dayKey,
         itemId: { $in: offers.map((item) => item.id) },
     }).lean();
 
-    return new Set(stocks.map((stock) => stock.itemId));
+    const stocksByItem = new Map(stocks.map((stock) => [stock.itemId, stock]));
+    return new Map(offers.map((item) => {
+        const stock = stocksByItem.get(item.id);
+        const limit = Number(stock?.stockLimit)
+            || getDailyStockLimit(guildId, dayKey, item.id);
+        // Documentos criados pela versão antiga representam uma compra realizada.
+        const purchased = stock
+            ? Math.max(1, Number(stock.purchasedCount) || 0)
+            : 0;
+        const remaining = Math.max(0, limit - purchased);
+        return [item.id, {
+            limit,
+            purchased,
+            remaining,
+            sold: remaining === 0,
+        }];
+    }));
+}
+
+async function getSoldItemIds(guildId, dayKey, offers, StockModel = MerchantStock) {
+    const stockStates = await getStockStates(guildId, dayKey, offers, StockModel);
+    return new Set([...stockStates.entries()]
+        .filter(([, stock]) => stock.sold)
+        .map(([itemId]) => itemId));
 }
 
 function seededShuffle(items, seed) {
@@ -398,18 +431,37 @@ function getEffectLabel(item) {
     return 'Relíquia colecionável para o /perfil';
 }
 
-function getOfferDescription(profile, item, sold) {
-    if (ownsItem(profile, item)) return `${item.rarity} • já pertence a você`;
-    if (reachedItemLimit(profile, item)) return `${item.rarity} • melhoria máxima alcançada`;
-    if (sold) return `${item.rarity} • esgotado neste servidor`;
-    return `${moneyFormatter.format(item.price)} moedas • ${getEffectLabel(item)}`;
+function normalizeStockState(stock) {
+    if (typeof stock === 'boolean') {
+        return {
+            limit: 1,
+            purchased: stock ? 1 : 0,
+            remaining: stock ? 0 : 1,
+            sold: stock,
+        };
+    }
+    return stock || {
+        limit: 1,
+        purchased: 0,
+        remaining: 1,
+        sold: false,
+    };
 }
 
-function getOfferStatus(profile, item, sold) {
+function getOfferDescription(profile, item, rawStock) {
+    const stock = normalizeStockState(rawStock);
+    if (ownsItem(profile, item)) return `${item.rarity} • já pertence a você`;
+    if (reachedItemLimit(profile, item)) return `${item.rarity} • melhoria máxima alcançada`;
+    if (stock.sold) return `${item.rarity} • estoque 0/${stock.limit}`;
+    return `${moneyFormatter.format(item.price)} moedas • estoque ${stock.remaining}/${stock.limit}`;
+}
+
+function getOfferStatus(profile, item, rawStock) {
+    const stock = normalizeStockState(rawStock);
     if (ownsItem(profile, item)) return '✅ Adquirido';
     if (reachedItemLimit(profile, item)) return '✅ Melhoria máxima alcançada';
-    if (sold) return '❌ Esgotado neste servidor';
-    return `🪙 ${moneyFormatter.format(item.price)} · ${getEffectLabel(item)}`;
+    if (stock.sold) return `❌ Esgotado · 0/${stock.limit}`;
+    return `🪙 ${moneyFormatter.format(item.price)} · Estoque ${stock.remaining}/${stock.limit}`;
 }
 
 function createCategoryMenu(selectedCategory) {
@@ -436,7 +488,7 @@ function createCategoryMenu(selectedCategory) {
     );
 }
 
-function createShopMenu(profile, offers, soldItemIds) {
+function createShopMenu(profile, offers, stockStates) {
     const menu = new StringSelectMenuBuilder()
         .setCustomId('merchant_item')
         .setPlaceholder('Examine uma oferta')
@@ -444,7 +496,7 @@ function createShopMenu(profile, offers, soldItemIds) {
             label: item.name,
             value: item.id,
             emoji: item.emoji,
-            description: getOfferDescription(profile, item, soldItemIds.has(item.id)),
+            description: getOfferDescription(profile, item, stockStates.get(item.id)),
         })));
 
     return new ActionRowBuilder().addComponents(menu);
@@ -488,10 +540,10 @@ function renderLobby(profile, user, notice = '') {
     return { embeds: [embed], components: [createCategoryMenu()] };
 }
 
-function renderShop(profile, user, offers, soldItemIds = new Set(), notice = '', category = 'profile') {
+function renderShop(profile, user, offers, stockStates = new Map(), notice = '', category = 'profile') {
     const money = Math.max(0, Number(profile?.money) || 0);
     const offerList = offers.map((item) => {
-        const status = getOfferStatus(profile, item, soldItemIds.has(item.id));
+        const status = getOfferStatus(profile, item, stockStates.get(item.id));
         return `${item.emoji} **${item.name}** · ${item.rarity}\n└ ${status}`;
     }).join('\n');
     const noticeText = notice ? `${notice}\n\n` : '';
@@ -518,18 +570,20 @@ function renderShop(profile, user, offers, soldItemIds = new Set(), notice = '',
                 inline: false,
             },
         )
-        .setFooter({ text: 'Uma unidade por servidor • O estoque renova diariamente' });
+        .setFooter({ text: 'Estoque de 1 a 6 por oferta e servidor • Renovação diária' });
 
     return {
         embeds: [embed],
         components: [
             createCategoryMenu(category),
-            createShopMenu(profile, offers, soldItemIds),
+            createShopMenu(profile, offers, stockStates),
         ],
     };
 }
 
-function renderItem(profile, item, sold = false, category = 'profile') {
+function renderItem(profile, item, rawStock = false, category = 'profile') {
+    const stock = normalizeStockState(rawStock);
+    const { sold } = stock;
     const money = Math.max(0, Number(profile?.money) || 0);
     const owned = ownsItem(profile, item);
     const maximum = reachedItemLimit(profile, item);
@@ -552,6 +606,7 @@ function renderItem(profile, item, sold = false, category = 'profile') {
             { name: '💎 Raridade', value: `**${item.rarity}**`, inline: true },
             { name: '🪙 Preço', value: `**${moneyFormatter.format(item.price)}**`, inline: true },
             { name: '👝 Sua bolsa', value: `**${moneyFormatter.format(money)}**`, inline: true },
+            { name: '📦 Estoque', value: `**${stock.remaining}/${stock.limit}**`, inline: true },
             { name: '✨ Recompensa', value: `**${getEffectLabel(item)}**`, inline: false },
         );
 
@@ -598,21 +653,47 @@ async function purchaseItem(purchase, dependencies = {}) {
         username,
         item,
     } = purchase;
+    const stockId = getStockId(guildId, dayKey, item.id);
+    const stockLimit = getDailyStockLimit(guildId, dayKey, item.id);
 
     if (dayKey !== getDailyOfferKey()) {
         return { status: 'expired', profile: await ProfileModel.findOne({ guildId, userId }) };
     }
 
     try {
+        // Converte de modo compatível um registro da versão antiga (estoque único).
+        await StockModel.updateOne(
+            { _id: stockId, stockLimit: { $exists: false } },
+            { $set: { stockLimit, purchasedCount: 1 } },
+        );
+
         return await withProfileLock(guildId, userId, () => connection.transaction(async (session) => {
-            await StockModel.create([{
-                _id: getStockId(guildId, dayKey, item.id),
-                guildId,
-                dayKey,
-                itemId: item.id,
-                buyerId: userId,
-                expiresAt: new Date(Date.now() + 3 * 86_400_000),
-            }], { session });
+            await StockModel.findOneAndUpdate(
+                {
+                    _id: stockId,
+                    purchasedCount: { $lt: stockLimit },
+                },
+                {
+                    $setOnInsert: {
+                        guildId,
+                        dayKey,
+                        itemId: item.id,
+                        stockLimit,
+                        expiresAt: new Date(Date.now() + 3 * 86_400_000),
+                    },
+                    $set: {
+                        buyerId: userId,
+                        purchasedAt: new Date(),
+                    },
+                    $inc: { purchasedCount: 1 },
+                },
+                {
+                    new: true,
+                    upsert: true,
+                    session,
+                    setDefaultsOnInsert: false,
+                },
+            );
 
             const reward = getRewardName(item);
             const query = {
@@ -743,7 +824,7 @@ module.exports = {
         let offers = [];
         let collector;
         let selectedItem;
-        let soldItemIds = new Set();
+        let stockStates = new Map();
 
         try {
             let profile = await getProfile(guildId, userId);
@@ -774,12 +855,12 @@ module.exports = {
                         const offerCount = category === 'cards' ? CARD_ITEMS.length : 6;
                         offers = getDailyOffers(new Date(), offerCount, category);
                         selectedItem = undefined;
-                        soldItemIds = await getSoldItemIds(guildId, dayKey, offers);
+                        stockStates = await getStockStates(guildId, dayKey, offers);
                         await componentInteraction.update(renderShop(
                             profile,
                             interaction.user,
                             offers,
-                            soldItemIds,
+                            stockStates,
                             '',
                             category,
                         ));
@@ -792,11 +873,11 @@ module.exports = {
                             await componentInteraction.deferUpdate();
                             return;
                         }
-                        soldItemIds = await getSoldItemIds(guildId, dayKey, offers);
+                        stockStates = await getStockStates(guildId, dayKey, offers);
                         await componentInteraction.update(renderItem(
                             profile,
                             selectedItem,
-                            soldItemIds.has(selectedItem.id),
+                            stockStates.get(selectedItem.id),
                             category,
                         ));
                         return;
@@ -806,19 +887,19 @@ module.exports = {
                         category = undefined;
                         selectedItem = undefined;
                         offers = [];
-                        soldItemIds = new Set();
+                        stockStates = new Map();
                         await componentInteraction.update(renderLobby(profile, interaction.user));
                         return;
                     }
 
                     if (componentInteraction.customId === 'merchant_back') {
                         selectedItem = undefined;
-                        soldItemIds = await getSoldItemIds(guildId, dayKey, offers);
+                        stockStates = await getStockStates(guildId, dayKey, offers);
                         await componentInteraction.update(renderShop(
                             profile,
                             interaction.user,
                             offers,
-                            soldItemIds,
+                            stockStates,
                             '',
                             category,
                         ));
@@ -838,15 +919,13 @@ module.exports = {
                         item: selectedItem,
                     });
                     if (result.profile) profile = result.profile;
-                    if (['purchased', 'sold'].includes(result.status)) {
-                        soldItemIds.add(selectedItem.id);
-                    }
+                    stockStates = await getStockStates(guildId, dayKey, offers);
 
                     await componentInteraction.update(renderShop(
                         profile,
                         interaction.user,
                         offers,
-                        soldItemIds,
+                        stockStates,
                         createPurchaseMessage(selectedItem, result),
                         category,
                     ));
@@ -879,9 +958,11 @@ module.exports = {
     createPurchaseMessage,
     getDailyOffers,
     getDailyOfferKey,
+    getDailyStockLimit,
     getEffectLabel,
     getRewardName,
     getSoldItemIds,
+    getStockStates,
     ownsItem,
     reachedItemLimit,
     purchaseItem,

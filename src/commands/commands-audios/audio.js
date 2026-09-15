@@ -92,9 +92,16 @@ module.exports = {
                 { name: '🔁 Loop', value: playerManager.loopEnabled ? 'Ativado' : 'Desativado', inline: true },
             ];
             if (playerManager.currentAudioName) {
+                const metadata = playerManager.getAudioMetadata();
+                const sourceLabel = metadata?.source === 'youtube' ? 'YouTube' : 'Discord';
                 fields.push({
                     name: '🎶 Tocando agora',
-                    value: `**${playerManager.getDisplayName(playerManager.currentAudioName)}**`,
+                    value: [
+                        `**${playerManager.getDisplayName(playerManager.currentAudioName)}**`,
+                        metadata?.sourceChannel
+                            ? `📡 ${sourceLabel}: **${metadata.sourceChannel}**`
+                            : '📡 Origem não registrada',
+                    ].join('\n'),
                 });
             }
             return new EmbedBuilder()
@@ -170,6 +177,8 @@ module.exports = {
                         .setEmoji('🔊'),
                     new ButtonBuilder().setCustomId('volume_down').setLabel('-').setStyle(ButtonStyle.Secondary)
                         .setEmoji('🔉'),
+                    new ButtonBuilder().setCustomId('close_audio').setLabel('Encerrar').setStyle(ButtonStyle.Danger)
+                        .setEmoji('🛑'),
                 ),
             );
 

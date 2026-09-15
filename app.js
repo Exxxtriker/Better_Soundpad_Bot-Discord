@@ -16,9 +16,11 @@ const mongoose = require('mongoose');
 const { token } = require('./config');
 const { stopActivityRotation } = require('./src/events/botOn');
 const { configureDnsResolver, PUBLIC_DNS_SERVERS } = require('./src/utils/dnsResolver');
+const { loginWithRetry } = require('./src/utils/discordLogin');
 /* eslint-enable import/order */
 
 const MONGO_OPTIONS = { serverSelectionTimeoutMS: 10_000 };
+const startupAbortController = new AbortController();
 let shuttingDown = false;
 
 configureDnsResolver();
@@ -84,8 +86,15 @@ async function start() {
         if (!process.env.MONGO_URI) throw new Error('Variável de ambiente ausente: MONGO_URI');
         await connectMongo();
         registerRuntimeErrorSources({ databaseConnection: mongoose.connection });
-        await client.login(token);
+        await loginWithRetry(client, token, {
+            signal: startupAbortController.signal,
+            onRetry: (error, retry) => writeErrorLog('RECOVERED_ERROR', [
+                `Falha temporária ao conectar ao Discord. Tentativa ${retry.attempt}; nova tentativa em ${retry.delay / 1_000}s.`,
+                error,
+            ]),
+        });
     } catch (error) {
+        if (shuttingDown) return;
         reportCriticalError('Falha ao iniciar o bot:', error);
         process.exitCode = 1;
     }
@@ -94,6 +103,7 @@ async function start() {
 async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
+    startupAbortController.abort();
     stopActivityRotation(client);
     try {
         await client.destroy();

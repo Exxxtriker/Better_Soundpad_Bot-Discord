@@ -1,7 +1,8 @@
 const path = require('node:path');
 
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
-const MAX_AUDIO_DURATION_SECONDS = 15 * 60;
+const MAX_DOWNLOADED_AUDIO_BYTES = 100 * 1024 * 1024;
+const MAX_AUDIO_DURATION_SECONDS = 2 * 60 * 60;
 const SUPPORTED_AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg', '.wav']);
 
 function sanitizeBaseName(value) {
@@ -64,6 +65,7 @@ function validateYouTubeUrl(value) {
 module.exports = {
     MAX_AUDIO_BYTES,
     MAX_AUDIO_DURATION_SECONDS,
+    MAX_DOWNLOADED_AUDIO_BYTES,
     SUPPORTED_AUDIO_EXTENSIONS,
     resolveInside,
     sanitizeBaseName,
