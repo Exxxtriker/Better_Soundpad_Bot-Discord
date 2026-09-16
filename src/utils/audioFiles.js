@@ -1,7 +1,7 @@
 const path = require('node:path');
 
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
-const MAX_DOWNLOADED_AUDIO_BYTES = 100 * 1024 * 1024;
+const MAX_DOWNLOADED_AUDIO_BYTES = 250 * 1024 * 1024;
 const MAX_AUDIO_DURATION_SECONDS = 2 * 60 * 60;
 const SUPPORTED_AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg', '.wav']);
 

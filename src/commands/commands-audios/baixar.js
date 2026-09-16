@@ -105,7 +105,7 @@ module.exports = {
                 '--audio-format', 'mp3',
                 '--no-playlist',
                 '--no-overwrites',
-                '--max-filesize', '100M',
+                '--max-filesize', '250M',
                 '--match-filter', `duration <= ${MAX_AUDIO_DURATION_SECONDS}`,
                 '--quiet',
                 '--no-warnings',
@@ -136,17 +136,17 @@ module.exports = {
                     reportedPath: downloadMetadata?.filepath,
                     output: stdout,
                     details: stderr,
-                    limits: 'Duração máxima de 2 horas e download máximo de 100 MB.',
+                    limits: 'Duração máxima de 2 horas e download máximo de 250 MB.',
                 });
                 return interaction.editReply({
-                    content: '❌ O vídeo não gerou um áudio. Confira os limites de **2 horas** e **100 MB**.',
+                    content: '❌ O vídeo não gerou um áudio. Confira os limites de **2 horas** e **250 MB**.',
                 });
             }
 
             const downloadedStats = await fs.promises.stat(downloadedPath);
             if (downloadedStats.size > MAX_DOWNLOADED_AUDIO_BYTES) {
                 await fs.promises.unlink(downloadedPath);
-                return interaction.editReply({ content: '❌ O áudio convertido ultrapassou 100 MB.' });
+                return interaction.editReply({ content: '❌ O áudio convertido ultrapassou 250 MB.' });
             }
 
             if (downloadedPath !== finalPath) await fs.promises.rename(downloadedPath, finalPath);
@@ -166,7 +166,7 @@ module.exports = {
             const acknowledged = interaction.deferred || interaction.replied;
             const response = {
                 content: acknowledged
-                    ? '❌ Falha ao baixar o áudio. Confira a URL e os limites de 2 horas e 100 MB.'
+                    ? '❌ Falha ao baixar o áudio. Confira a URL e os limites de 2 horas e 250 MB.'
                     : `❌ ${err.message || 'Não foi possível processar o vídeo.'}`,
             };
             if (acknowledged) return interaction.editReply(response).catch(() => {});
