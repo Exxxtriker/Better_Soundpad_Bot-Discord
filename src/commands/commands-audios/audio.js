@@ -17,8 +17,8 @@ const { isMusicActive } = require('../music/play');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('audio')
-        .setDescription('Toca um áudio do diretório de áudios no canal de voz.')
+        .setName('soundpad')
+        .setDescription('Abre o painel de áudios do bardo para tocar efeitos sonoros e músicas de fundo.')
         .setDMPermission(false),
 
     async execute(interaction) {
@@ -33,7 +33,7 @@ module.exports = {
 
         if (isMusicActive(guildId)) {
             return interaction.reply({
-                content: '⚠️ O player de música está ativo. Encerre-o antes de usar `/audio`.',
+                content: '⚠️ O player de música está ativo. Encerre-o antes de usar `/soundpad`.',
                 flags: 64,
             });
         }

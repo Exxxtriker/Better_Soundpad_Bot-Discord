@@ -35,12 +35,12 @@ Gideon é um bot multitarefa para Discord criado para acompanhar campanhas de RP
 | Comando | Função |
 | --- | --- |
 | `/play` | Reproduz uma música, busca ou playlist de YouTube, Spotify ou SoundCloud. |
-| `/audio` | Abre o catálogo de áudios locais separado por categorias. |
+| `/soundpad` | Abre o catálogo de áudios locais separado por categorias. |
 | `/uploadaudio` | Adiciona um arquivo ao soundboard. Requer **Gerenciar Servidor**. |
 | `/ytmp3` | Baixa áudios de até 2 horas e 100 MB do YouTube. Requer **Gerenciar Servidor**. |
 | `/audiosize` | Mostra o espaço utilizado pelo catálogo local. |
 
-`/play` e `/audio` são mutuamente exclusivos em cada servidor: enquanto um player estiver ativo, o outro ficará bloqueado. O bot encerra a sessão e o menu quando a fila fica inativa ou não existem mais usuários no canal de voz.
+`/play` e `/soundpad` são mutuamente exclusivos em cada servidor: enquanto um player estiver ativo, o outro ficará bloqueado. O bot encerra a sessão e o menu quando a fila fica inativa ou não existem mais usuários no canal de voz.
 
 ### RPG, perfil e economia
 
