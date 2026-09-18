@@ -18,6 +18,7 @@ const {
     validateYouTubeUrl,
 } = require('../../utils/audioFiles');
 const { saveAudioMetadata } = require('../../utils/audioMetadata');
+const { isBotOwner } = require('../../utils/botOwners');
 
 const execFileAsync = promisify(execFile);
 const activeDownloads = new Set();
@@ -68,8 +69,18 @@ module.exports = {
         let downloadKey;
         let downloadReserved = false;
         try {
-            if (!interaction.inGuild() || !interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild)) {
-                return interaction.reply({ content: '❌ Você precisa da permissão Gerenciar Servidor.', flags: 64 });
+            if (!isBotOwner(interaction.user.id)) {
+                return interaction.reply({
+                    content: '❌ Este comando é restrito aos donos do bot.',
+                    flags: 64,
+                });
+            }
+
+            if (!interaction.inGuild()) {
+                return interaction.reply({
+                    content: '❌ Este comando só pode ser usado dentro de um servidor.',
+                    flags: 64,
+                });
             }
 
             const nome = sanitizeBaseName(interaction.options.getString('nome'));

@@ -9,6 +9,7 @@ const {
     sanitizeBaseName,
 } = require('../../utils/audioFiles');
 const { saveAudioMetadata } = require('../../utils/audioMetadata');
+const { isBotOwner } = require('../../utils/botOwners');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -22,8 +23,18 @@ module.exports = {
 
     async execute(interaction) {
         try {
-            if (!interaction.inGuild() || !interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild)) {
-                return interaction.reply({ content: '❌ Você precisa da permissão Gerenciar Servidor.', flags: 64 });
+            if (!isBotOwner(interaction.user.id)) {
+                return interaction.reply({
+                    content: '❌ Este comando é restrito aos donos do bot.',
+                    flags: 64,
+                });
+            }
+
+            if (!interaction.inGuild()) {
+                return interaction.reply({
+                    content: '❌ Este comando só pode ser usado dentro de um servidor.',
+                    flags: 64,
+                });
             }
 
             const attachment = interaction.options.getAttachment('arquivo');

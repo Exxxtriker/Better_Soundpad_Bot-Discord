@@ -3,6 +3,12 @@ const {
     buildCarouselControls,
     registerCarousel,
 } = require('../../handlers/carouselInteractionHandler');
+const { isBotOwner } = require('../../utils/botOwners');
+
+const OWNER_AUDIO_HELP = [
+    '`/uploadaudio` — Envia um áudio; restrito aos donos do bot.',
+    '`/ytmp3` — Salva um áudio do YouTube; restrito aos donos do bot.',
+].join('\n');
 
 const HELP_PAGES = [
     {
@@ -86,28 +92,33 @@ const HELP_PAGES = [
             '`1d20+7`, `1d20+50%` ou `10x10+78` no chat — Detecta e resolve automaticamente.',
             '`/ping` — Mostra se Gideon está respondendo.',
             '`/clear` — Limpa mensagens; exige Gerenciar Mensagens.',
-            '`/uploadaudio` — Envia um áudio; exige Gerenciar Servidor.',
-            '`/ytmp3` — Salva um áudio do YouTube; exige Gerenciar Servidor.',
             '`/audiosize` — Informa o espaço ocupado pelos áudios.',
             '`/emoji` — Gerencia emojis; disponível somente ao dono do bot.',
         ].join('\n'),
     },
 ];
 
-function createHelpEmbed(position) {
-    const page = HELP_PAGES[position];
+function getHelpPages(userId) {
+    if (!isBotOwner(userId)) return HELP_PAGES;
+    return HELP_PAGES.map((page) => (page.id === 'utilidades'
+        ? { ...page, description: `${page.description}\n${OWNER_AUDIO_HELP}` }
+        : page));
+}
+
+function createHelpEmbed(position, pages = HELP_PAGES) {
+    const page = pages[position];
     return new EmbedBuilder()
         .setColor(0x8B1E2D)
         .setAuthor({ name: '📜 MANUAL DO AVENTUREIRO' })
         .setTitle(page.title)
         .setDescription(page.description)
-        .setFooter({ text: `${position + 1}/${HELP_PAGES.length} • /help` });
+        .setFooter({ text: `${position + 1}/${pages.length} • /help` });
 }
 
-function createHelpPayload(position) {
+function createHelpPayload(position, pages = HELP_PAGES) {
     return {
-        embeds: [createHelpEmbed(position)],
-        components: [buildCarouselControls(position, HELP_PAGES.length)],
+        embeds: [createHelpEmbed(position, pages)],
+        components: [buildCarouselControls(position, pages.length)],
     };
 }
 
@@ -125,15 +136,17 @@ module.exports = {
         .setDMPermission(false),
 
     async execute(interaction) {
+        const pages = getHelpPages(interaction.user.id);
         const category = interaction.options.getString('categoria');
-        const selected = HELP_PAGES.findIndex((page) => page.id === category);
+        const selected = pages.findIndex((page) => page.id === category);
         const position = selected >= 0 ? selected : 0;
+        const render = (nextPosition) => createHelpPayload(nextPosition, pages);
 
-        await interaction.reply(createHelpPayload(position));
+        await interaction.reply(render(position));
         await registerCarousel(interaction, {
             position,
-            total: HELP_PAGES.length,
-            render: createHelpPayload,
+            total: pages.length,
+            render,
         });
         return undefined;
     },
@@ -141,4 +154,5 @@ module.exports = {
     HELP_PAGES,
     createHelpEmbed,
     createHelpPayload,
+    getHelpPages,
 };
