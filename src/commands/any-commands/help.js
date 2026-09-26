@@ -75,7 +75,7 @@ const HELP_PAGES = [
         title: '🎶 Música e áudios',
         description: [
             '`/play` — Toca músicas e playlists de YouTube, Spotify e SoundCloud.',
-            '`/soundpad` — Abre o repertório de SoundEffects, músicas e trilhas locais.',
+            '`/soundpad` — Reproduz trilhas e efeitos simultâneos, com volume próprio para cada camada.',
             '',
             'Os players possuem fila, pausa, pular, voltar e loop.',
             'Também controlam volume e encerramento automático.',

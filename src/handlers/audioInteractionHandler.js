@@ -4,11 +4,15 @@ const AUDIO_MENU_IDS = new Set(['soundpad_category', 'soundpad_select']);
 const AUDIO_BUTTONS = new Set([
     'soundpad_resume',
     'soundpad_pause',
-    'soundpad_stop',
+    'soundpad_stop_background',
+    'soundpad_stop_effect',
     'soundpad_close',
     'soundpad_loop',
-    'soundpad_volume_up',
-    'soundpad_volume_down',
+    'soundpad_background_up',
+    'soundpad_background_down',
+    'soundpad_effect_up',
+    'soundpad_effect_down',
+    'soundpad_layer',
     'soundpad_next',
     'soundpad_previous',
     'soundpad_reload',
@@ -66,8 +70,11 @@ async function updateSoundpad(interaction, playerManager, isAudioMenu) {
     case 'soundpad_pause':
         playerManager.pause();
         break;
-    case 'soundpad_stop':
-        playerManager.stop();
+    case 'soundpad_stop_background':
+        playerManager.stopLayer('background');
+        break;
+    case 'soundpad_stop_effect':
+        playerManager.stopLayer('effect');
         break;
     case 'soundpad_close':
         playerManager.destroy();
@@ -78,11 +85,20 @@ async function updateSoundpad(interaction, playerManager, isAudioMenu) {
     case 'soundpad_loop':
         playerManager.toggleLoop();
         break;
-    case 'soundpad_volume_up':
-        playerManager.setVolume(playerManager.volume + 0.1);
+    case 'soundpad_background_up':
+        playerManager.setVolume('background', playerManager.volumes.background + 0.1);
         break;
-    case 'soundpad_volume_down':
-        playerManager.setVolume(playerManager.volume - 0.1);
+    case 'soundpad_background_down':
+        playerManager.setVolume('background', playerManager.volumes.background - 0.1);
+        break;
+    case 'soundpad_effect_up':
+        playerManager.setVolume('effect', playerManager.volumes.effect + 0.1);
+        break;
+    case 'soundpad_effect_down':
+        playerManager.setVolume('effect', playerManager.volumes.effect - 0.1);
+        break;
+    case 'soundpad_layer':
+        playerManager.togglePlaybackLayer();
         break;
     case 'soundpad_next':
         playerManager.currentPage = Math.min(

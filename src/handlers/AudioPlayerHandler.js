@@ -1,6 +1,6 @@
 /* eslint-disable max-len */
 const {
-    joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior,
+    joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior, StreamType,
 } = require('@discordjs/voice');
 const path = require('path');
 const fs = require('fs');
@@ -8,6 +8,9 @@ const { safelyDestroyVoiceConnection } = require('../utils/voiceConnection');
 const { createVoiceSessionGuard } = require('../utils/voiceSessionGuard');
 const { buildAudioCatalog, parseAudioName } = require('../utils/audioCatalog');
 const { loadAudioMetadata } = require('../utils/audioMetadata');
+const { SoundpadMixer } = require('../utils/soundpadMixer');
+
+const BACKGROUND_CATEGORIES = new Set(['Trilhas Sonoras', 'Ambientes', 'Músicas']);
 
 class AudioPlayerManager {
     constructor(guild, voiceChannel, audioFolder, supportedExtensions, client, onDestroy) {
@@ -21,8 +24,12 @@ class AudioPlayerManager {
         this.controlQueue = Promise.resolve();
 
         this.currentResource = null;
-        this.currentAudioName = null;
-        this.volume = 1.0;
+        this.mixer = null;
+        this.backgroundAudioName = null;
+        this.effectAudioName = null;
+        this.volumes = { background: 0.7, effect: 1.0 };
+        this.playbackLayer = 'background';
+        this.layerOverridden = false;
         this.loopEnabled = false;
 
         this.updateMessage = null; // função para atualizar embed e componentes
@@ -53,20 +60,20 @@ class AudioPlayerManager {
         // Listener do player
         this.player.on(AudioPlayerStatus.Idle, () => {
             if (this.destroyed) return;
-            if (this.loopEnabled && this.currentResource) {
-                this.playResource(this.currentResource.metadata.path);
-            } else {
-                this.currentResource = null;
-                this.currentAudioName = null;
-                this.requestMessageUpdate();
-                this.startIdleTimeout();
-            }
+            if (this.mixer && !this.mixer.finished) return;
+            this.currentResource = null;
+            this.mixer = null;
+            this.requestMessageUpdate();
+            this.startIdleTimeout();
         });
 
         this.player.on('error', (error) => {
             console.error('Erro no player:', error);
+            this.mixer?.destroy();
+            this.mixer = null;
             this.currentResource = null;
-            this.currentAudioName = null;
+            this.backgroundAudioName = null;
+            this.effectAudioName = null;
             this.requestMessageUpdate();
             this.startIdleTimeout();
         });
@@ -118,7 +125,15 @@ class AudioPlayerManager {
         if (!this.audioCatalog.has(category)) return false;
         this.selectedCategory = category;
         this.currentPage = 1;
+        this.playbackLayer = BACKGROUND_CATEGORIES.has(category) ? 'background' : 'effect';
+        this.layerOverridden = false;
         return true;
+    }
+
+    togglePlaybackLayer() {
+        this.playbackLayer = this.playbackLayer === 'background' ? 'effect' : 'background';
+        this.layerOverridden = true;
+        return this.playbackLayer;
     }
 
     getDisplayName(audioName) {
@@ -128,7 +143,7 @@ class AudioPlayerManager {
         return entry?.displayName || parseAudioName(audioName).displayName;
     }
 
-    getAudioMetadata(audioName = this.currentAudioName) {
+    getAudioMetadata(audioName) {
         if (!audioName) return null;
         return this.audioMetadata[audioName] || null;
     }
@@ -146,6 +161,9 @@ class AudioPlayerManager {
         this.audioMetadata = loadAudioMetadata(this.audioFolder);
         const categoryPreserved = this.audioCatalog.has(previousCategory);
         this.selectedCategory = categoryPreserved ? previousCategory : this.getCategories()[0];
+        if (!this.layerOverridden) {
+            this.playbackLayer = BACKGROUND_CATEGORIES.has(this.selectedCategory) ? 'background' : 'effect';
+        }
         this.currentPage = categoryPreserved
             ? Math.min(Math.max(previousPage, 1), this.getTotalPages())
             : 1;
@@ -191,52 +209,104 @@ class AudioPlayerManager {
         this.sentMessage = message;
     }
 
-    playAudio(audioName) {
+    playAudio(audioName, layer = this.playbackLayer) {
         if (this.destroyed || !this.audioNames.includes(audioName)) return false;
         const audioPath = this.supportedExtensions
             .map((ext) => path.join(this.audioFolder, audioName + ext))
             .find((p) => fs.existsSync(p));
         if (!audioPath) return false;
 
-        this.playResource(audioPath, audioName);
+        this.playResource(audioPath, audioName, layer);
         return true;
     }
 
-    playResource(audioPath, audioName = this.currentAudioName) {
+    createMixer() {
+        const mixer = new SoundpadMixer({
+            onLayerEnd: (layer) => {
+                if (this.destroyed || this.mixer !== mixer) return;
+                const name = layer === 'background' ? this.backgroundAudioName : this.effectAudioName;
+                if (layer === 'background' && this.loopEnabled && name && this.audioNames.includes(name)) {
+                    const audioPath = this.getAudioPath(name);
+                    if (audioPath) {
+                        try {
+                            mixer.setLayer('background', audioPath);
+                            return;
+                        } catch (error) {
+                            console.error('Erro ao reiniciar trilha do soundpad:', error);
+                        }
+                    }
+                }
+                if (layer === 'background') this.backgroundAudioName = null;
+                else this.effectAudioName = null;
+                this.requestMessageUpdate();
+            },
+            onError: (layer, error) => {
+                if (layer === 'background') this.loopEnabled = false;
+                console.error(`Erro na camada ${layer} do soundpad:`, error);
+            },
+        });
+        mixer.volumes = { ...this.volumes };
+        mixer.on('error', (error) => console.error('Erro no mixer do soundpad:', error));
+        this.mixer = mixer;
+        this.currentResource = createAudioResource(mixer, { inputType: StreamType.Raw });
+        return mixer;
+    }
+
+    getAudioPath(audioName) {
+        return this.supportedExtensions
+            .map((ext) => path.join(this.audioFolder, audioName + ext))
+            .find((filePath) => fs.existsSync(filePath));
+    }
+
+    playResource(audioPath, audioName, layer = this.playbackLayer) {
         if (this.destroyed) return;
-        const resource = createAudioResource(audioPath, { metadata: { path: audioPath }, inlineVolume: true });
-        resource.volume.setVolume(this.volume);
-        this.currentResource = resource;
-        this.currentAudioName = audioName;
-        this.player.play(resource);
+        const firstLayer = !this.mixer || this.mixer.finished;
+        const mixer = firstLayer ? this.createMixer() : this.mixer;
+        mixer.setLayer(layer, audioPath);
+        if (layer === 'background') this.backgroundAudioName = audioName;
+        else this.effectAudioName = audioName;
+        if (firstLayer) this.player.play(this.currentResource);
+        else if (this.player.state.status === AudioPlayerStatus.Paused) this.unpause();
     }
 
     pause() {
         if (this.destroyed) return false;
+        this.mixer?.setPaused(true);
         return this.player.pause();
     }
 
     unpause() {
         if (this.destroyed) return false;
+        this.mixer?.setPaused(false);
         return this.player.unpause();
+    }
+
+    stopLayer(layer) {
+        if (this.destroyed || !this.mixer) return false;
+        this.mixer.removeLayer(layer);
+        if (layer === 'background') this.backgroundAudioName = null;
+        else this.effectAudioName = null;
+        this.startIdleTimeout();
+        return true;
     }
 
     stop() {
         if (this.destroyed) return false;
+        this.mixer?.destroy();
+        this.mixer = null;
         this.currentResource = null;
-        this.currentAudioName = null;
+        this.backgroundAudioName = null;
+        this.effectAudioName = null;
         const stopped = this.player.stop(true);
         this.startIdleTimeout();
         return stopped;
     }
 
-    setVolume(volume) {
-        if (this.destroyed) return this.volume;
-        this.volume = Math.min(2, Math.max(0, volume));
-        if (this.currentResource?.volume) {
-            this.currentResource.volume.setVolume(this.volume);
-        }
-        return this.volume;
+    setVolume(layer, volume) {
+        if (this.destroyed) return this.volumes[layer];
+        this.volumes[layer] = Math.min(2, Math.max(0, volume));
+        if (this.mixer) this.mixer.volumes[layer] = this.volumes[layer];
+        return this.volumes[layer];
     }
 
     toggleLoop() {
@@ -250,9 +320,12 @@ class AudioPlayerManager {
         this.destroyed = true;
         this.loopEnabled = false;
         this.voiceGuard?.dispose();
+        this.mixer?.destroy();
+        this.mixer = null;
         this.player.stop(true);
         this.currentResource = null;
-        this.currentAudioName = null;
+        this.backgroundAudioName = null;
+        this.effectAudioName = null;
         safelyDestroyVoiceConnection(this.connection);
         if (deleteMessage && this.sentMessage && !this.sentMessage.deleted) {
             this.sentMessage.delete().catch((error) => {

@@ -147,29 +147,23 @@ module.exports = {
                 },
                 {
                     name: '⚙️ Mesa do bardo',
-                    value: `🔊 **${Math.round(playerManager.volume * 100)}%**\n🔁 **${playerManager.loopEnabled ? 'Loop ativo' : 'Loop inativo'}**`,
+                    value: `🎯 Próximo: **${playerManager.playbackLayer === 'background' ? 'Trilha' : 'Efeito'}**\n🔁 Trilha: **${playerManager.loopEnabled ? 'Loop ativo' : 'Loop inativo'}**`,
                     inline: true,
                 },
             ];
-            if (playerManager.currentAudioName) {
-                const metadata = playerManager.getAudioMetadata();
-                let sourceLabel = 'Arquivo local';
-                if (metadata?.source === 'youtube') sourceLabel = 'YouTube';
-                if (metadata?.source === 'discord') sourceLabel = 'Discord';
+            for (const [layer, name, title] of [
+                ['background', playerManager.backgroundAudioName, '🎶 Trilha / ambiente'],
+                ['effect', playerManager.effectAudioName, '✨ Efeito / voz'],
+            ]) {
+                const metadata = playerManager.getAudioMetadata(name);
                 fields.push({
-                    name: '🎶 Balada ecoando pelo salão',
+                    name: title,
                     value: [
-                        `> **${playerManager.getDisplayName(playerManager.currentAudioName)}**`,
-                        `🎚️ Estado: **${playbackStatus}**`,
-                        metadata?.sourceChannel
-                            ? `📡 ${sourceLabel}: **${metadata.sourceChannel}**`
-                            : '📡 Origem não registrada',
-                    ].join('\n'),
-                });
-            } else {
-                fields.push({
-                    name: '🎶 O salão está em silêncio',
-                    value: '*Escolha uma canção no menu abaixo para iniciar o espetáculo.*',
+                        name ? `> **${playerManager.getDisplayName(name)}**` : '*Silêncio*',
+                        `🔊 ${Math.round(playerManager.volumes[layer] * 100)}%${name ? ` • ${playbackStatus}` : ''}`,
+                        metadata?.sourceChannel ? `📡 ${metadata.sourceChannel}` : null,
+                    ].filter(Boolean).join('\n'),
+                    inline: true,
                 });
             }
             return new EmbedBuilder()
@@ -233,6 +227,11 @@ module.exports = {
                         .setCustomId('soundpad_next').setLabel('Próxima').setStyle(ButtonStyle.Secondary)
                         .setEmoji('▶️')
                         .setDisabled(playerManager.currentPage >= totalPages),
+                    new ButtonBuilder().setCustomId('soundpad_layer').setLabel(playerManager.playbackLayer === 'background' ? '🎶 Trilha' : '✨ Efeito').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId('soundpad_reload').setLabel('Atualizar').setStyle(ButtonStyle.Secondary)
+                        .setEmoji('🔄'),
+                    new ButtonBuilder().setCustomId('soundpad_close').setLabel('Encerrar').setStyle(ButtonStyle.Danger)
+                        .setEmoji('🛑'),
                 ),
                 new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('soundpad_resume').setLabel('Continuar').setStyle(ButtonStyle.Success)
@@ -241,18 +240,14 @@ module.exports = {
                         .setEmoji('⏸️'),
                     new ButtonBuilder().setCustomId('soundpad_loop').setLabel(`Loop: ${playerManager.loopEnabled ? 'Ativado' : 'Desativado'}`).setStyle(playerManager.loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
                         .setEmoji('🔄'),
+                    new ButtonBuilder().setCustomId('soundpad_stop_background').setLabel('Parar trilha').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId('soundpad_stop_effect').setLabel('Parar efeito').setStyle(ButtonStyle.Danger),
                 ),
                 new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('soundpad_reload').setLabel('Atualizar').setStyle(ButtonStyle.Primary)
-                        .setEmoji('🔄'),
-                    new ButtonBuilder().setCustomId('soundpad_stop').setLabel('Parar').setStyle(ButtonStyle.Danger)
-                        .setEmoji('⏹️'),
-                    new ButtonBuilder().setCustomId('soundpad_volume_up').setLabel('+').setStyle(ButtonStyle.Secondary)
-                        .setEmoji('🔊'),
-                    new ButtonBuilder().setCustomId('soundpad_volume_down').setLabel('-').setStyle(ButtonStyle.Secondary)
-                        .setEmoji('🔉'),
-                    new ButtonBuilder().setCustomId('soundpad_close').setLabel('Encerrar').setStyle(ButtonStyle.Danger)
-                        .setEmoji('🛑'),
+                    new ButtonBuilder().setCustomId('soundpad_background_down').setLabel('🎶 −').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId('soundpad_background_up').setLabel('🎶 +').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId('soundpad_effect_down').setLabel('✨ −').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId('soundpad_effect_up').setLabel('✨ +').setStyle(ButtonStyle.Secondary),
                 ),
             );
 
