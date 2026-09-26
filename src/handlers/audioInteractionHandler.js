@@ -41,6 +41,8 @@ async function safelyDeferUpdate(interaction) {
 }
 
 async function updateSoundpad(interaction, playerManager, isAudioMenu) {
+    let feedback;
+
     if (isAudioMenu) {
         if (interaction.customId === 'soundpad_category') {
             if (!playerManager.selectCategory(interaction.values[0])) {
@@ -92,13 +94,27 @@ async function updateSoundpad(interaction, playerManager, isAudioMenu) {
         playerManager.currentPage = Math.max(playerManager.currentPage - 1, 1);
         break;
     case 'soundpad_reload':
-        playerManager.reloadAudioList();
+        {
+            const result = playerManager.reloadAudioList();
+            const changes = [
+                result.added.length > 0 ? `➕ ${result.added.length} novo(s)` : null,
+                result.removed.length > 0 ? `➖ ${result.removed.length} removido(s)` : null,
+            ].filter(Boolean).join(' • ');
+            feedback = [
+                '✅ **Catálogo do soundpad atualizado!**',
+                `🎼 ${result.audioCount} áudio(s) em ${result.categoryCount} categoria(s).`,
+                changes || 'Nenhuma alteração encontrada.',
+            ].join('\n');
+        }
         break;
     default:
         return;
     }
 
     await playerManager.updateMessage?.();
+    if (feedback) {
+        await safelyReply(interaction, { content: feedback, flags: 64 });
+    }
 }
 
 async function audioInteractionHandler(interaction) {

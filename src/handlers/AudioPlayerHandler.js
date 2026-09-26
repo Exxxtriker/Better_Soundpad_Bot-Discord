@@ -99,6 +99,21 @@ class AudioPlayerManager {
         return this.audioCatalog.get(this.selectedCategory) || [];
     }
 
+    getAudioCount() {
+        return this.audioNames.length;
+    }
+
+    getPlaybackStatusLabel() {
+        const labels = {
+            [AudioPlayerStatus.Playing]: 'Tocando',
+            [AudioPlayerStatus.Paused]: 'Pausado',
+            [AudioPlayerStatus.AutoPaused]: 'Pausado automaticamente',
+            [AudioPlayerStatus.Buffering]: 'Preparando o áudio',
+            [AudioPlayerStatus.Idle]: 'Aguardando uma escolha',
+        };
+        return labels[this.player?.state?.status] || 'Aguardando uma escolha';
+    }
+
     selectCategory(category) {
         if (!this.audioCatalog.has(category)) return false;
         this.selectedCategory = category;
@@ -119,16 +134,30 @@ class AudioPlayerManager {
     }
 
     reloadAudioList() {
+        const previousAudioNames = new Set(this.audioNames || []);
         const previousCategory = this.selectedCategory;
-        const files = fs.readdirSync(this.audioFolder)
-            .filter((file) => this.supportedExtensions.includes(path.extname(file).toLowerCase()));
-        this.audioNames = [...new Set(files.map((f) => path.basename(f, path.extname(f))))];
+        const previousPage = this.currentPage || 1;
+        const files = fs.readdirSync(this.audioFolder, { withFileTypes: true })
+            .filter((entry) => entry.isFile()
+                && this.supportedExtensions.includes(path.extname(entry.name).toLowerCase()))
+            .map((entry) => entry.name);
+        this.audioNames = [...new Set(files.map((file) => path.basename(file, path.extname(file))))];
         this.audioCatalog = buildAudioCatalog(this.audioNames);
         this.audioMetadata = loadAudioMetadata(this.audioFolder);
-        this.selectedCategory = this.audioCatalog.has(previousCategory)
-            ? previousCategory
-            : this.getCategories()[0];
-        this.currentPage = 1;
+        const categoryPreserved = this.audioCatalog.has(previousCategory);
+        this.selectedCategory = categoryPreserved ? previousCategory : this.getCategories()[0];
+        this.currentPage = categoryPreserved
+            ? Math.min(Math.max(previousPage, 1), this.getTotalPages())
+            : 1;
+        this.lastReloadAt = Date.now();
+
+        const currentAudioNames = new Set(this.audioNames);
+        return {
+            added: this.audioNames.filter((audioName) => !previousAudioNames.has(audioName)),
+            removed: [...previousAudioNames].filter((audioName) => !currentAudioNames.has(audioName)),
+            audioCount: this.getAudioCount(),
+            categoryCount: this.getCategories().length,
+        };
     }
     // -------------------------------------------------------
 

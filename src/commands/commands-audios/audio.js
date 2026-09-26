@@ -130,36 +130,62 @@ module.exports = {
         // Função para criar embed atualizado
         const createEmbed = () => {
             const currentCategory = playerManager.selectedCategory || 'Sem áudios';
+            const selectedCount = playerManager.getSelectedEntries().length;
+            const totalPages = playerManager.getTotalPages();
+            const refreshTimestamp = Math.floor(playerManager.lastReloadAt / 1000);
+            const playbackStatus = playerManager.getPlaybackStatusLabel();
             const fields = [
                 {
-                    name: '📚 Categoria',
-                    value: `${getCategoryEmoji(currentCategory)} **${currentCategory}**\n${playerManager.getSelectedEntries().length} áudio(s)`,
+                    name: '🗂️ Ala do repertório',
+                    value: `${getCategoryEmoji(currentCategory)} **${currentCategory}**\n📜 ${selectedCount} áudio(s)`,
                     inline: true,
                 },
-                { name: '🔊 Volume', value: `${Math.round(playerManager.volume * 100)}%`, inline: true },
-                { name: '🔁 Loop', value: playerManager.loopEnabled ? 'Ativado' : 'Desativado', inline: true },
+                {
+                    name: '📖 Página do cancioneiro',
+                    value: `**${playerManager.currentPage}/${totalPages}**\n🎼 ${playerManager.getAudioCount()} no acervo`,
+                    inline: true,
+                },
+                {
+                    name: '⚙️ Mesa do bardo',
+                    value: `🔊 **${Math.round(playerManager.volume * 100)}%**\n🔁 **${playerManager.loopEnabled ? 'Loop ativo' : 'Loop inativo'}**`,
+                    inline: true,
+                },
             ];
             if (playerManager.currentAudioName) {
                 const metadata = playerManager.getAudioMetadata();
-                const sourceLabel = metadata?.source === 'youtube' ? 'YouTube' : 'Discord';
+                let sourceLabel = 'Arquivo local';
+                if (metadata?.source === 'youtube') sourceLabel = 'YouTube';
+                if (metadata?.source === 'discord') sourceLabel = 'Discord';
                 fields.push({
-                    name: '🎶 Tocando agora',
+                    name: '🎶 Balada ecoando pelo salão',
                     value: [
-                        `**${playerManager.getDisplayName(playerManager.currentAudioName)}**`,
+                        `> **${playerManager.getDisplayName(playerManager.currentAudioName)}**`,
+                        `🎚️ Estado: **${playbackStatus}**`,
                         metadata?.sourceChannel
                             ? `📡 ${sourceLabel}: **${metadata.sourceChannel}**`
                             : '📡 Origem não registrada',
                     ].join('\n'),
                 });
+            } else {
+                fields.push({
+                    name: '🎶 O salão está em silêncio',
+                    value: '*Escolha uma canção no menu abaixo para iniciar o espetáculo.*',
+                });
             }
             return new EmbedBuilder()
-                .setTitle('🎶 Repertório do Bardo')
-                .setDescription('Escolha primeiro uma **categoria** e depois o **áudio** que acompanhará a aventura.')
-                .setColor(0x8A2BE2)
+                .setAuthor({ name: '🍺 TAVERNA DE GIDEON • CANCIONEIRO ENCANTADO' })
+                .setTitle('🎻 Soundpad do Bardo')
+                .setDescription([
+                    '> *“Toda grande aventura merece uma trilha digna de virar lenda.”*',
+                    '',
+                    `🏰 Salão atual: <#${voiceChannel.id}>`,
+                    `🔄 Repertório atualizado <t:${refreshTimestamp}:R>`,
+                ].join('\n'))
+                .setColor(0xB8860B)
                 .setThumbnail('https://img1.picmix.com/output/stamp/normal/2/1/0/5/2725012_1e75a.gif')
                 .addFields(fields)
                 .setImage('https://media.discordapp.net/attachments/1402058526788161696/1408461378418901023/LwVJ.gif')
-                .setFooter({ text: 'O bardo espera ansioso por sua escolha... 🎤' });
+                .setFooter({ text: 'Escolha a ala, selecione a canção e deixe o bardo conduzir a aventura.  •  🔄 procura novos áudios' });
         };
 
         // Função para criar componentes (menus e botões) com paginação dinâmica
@@ -200,25 +226,25 @@ module.exports = {
             rows.push(
                 new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId('soundpad_previous').setLabel('Página anterior').setStyle(ButtonStyle.Secondary)
+                        .setCustomId('soundpad_previous').setLabel('Anterior').setStyle(ButtonStyle.Secondary)
                         .setEmoji('◀️')
                         .setDisabled(playerManager.currentPage <= 1),
                     new ButtonBuilder()
-                        .setCustomId('soundpad_next').setLabel('Próxima página').setStyle(ButtonStyle.Secondary)
+                        .setCustomId('soundpad_next').setLabel('Próxima').setStyle(ButtonStyle.Secondary)
                         .setEmoji('▶️')
                         .setDisabled(playerManager.currentPage >= totalPages),
                 ),
                 new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('soundpad_resume').setLabel('Play').setStyle(ButtonStyle.Success)
+                    new ButtonBuilder().setCustomId('soundpad_resume').setLabel('Continuar').setStyle(ButtonStyle.Success)
                         .setEmoji('▶️'),
-                    new ButtonBuilder().setCustomId('soundpad_pause').setLabel('Pause').setStyle(ButtonStyle.Danger)
+                    new ButtonBuilder().setCustomId('soundpad_pause').setLabel('Pausar').setStyle(ButtonStyle.Secondary)
                         .setEmoji('⏸️'),
                     new ButtonBuilder().setCustomId('soundpad_loop').setLabel(`Loop: ${playerManager.loopEnabled ? 'Ativado' : 'Desativado'}`).setStyle(playerManager.loopEnabled ? ButtonStyle.Success : ButtonStyle.Secondary)
                         .setEmoji('🔄'),
                 ),
                 new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('soundpad_reload').setLabel('Recarregar').setStyle(ButtonStyle.Success)
-                        .setEmoji('⏳'),
+                    new ButtonBuilder().setCustomId('soundpad_reload').setLabel('Atualizar').setStyle(ButtonStyle.Primary)
+                        .setEmoji('🔄'),
                     new ButtonBuilder().setCustomId('soundpad_stop').setLabel('Parar').setStyle(ButtonStyle.Danger)
                         .setEmoji('⏹️'),
                     new ButtonBuilder().setCustomId('soundpad_volume_up').setLabel('+').setStyle(ButtonStyle.Secondary)
